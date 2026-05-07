@@ -1,13 +1,14 @@
 import { state } from "./state.js";
-import { mouse } from "./input.js";
+import { mouse, keys } from "./input.js";
 import { game } from "./game.js";
 import { Room } from "./room.js";
 import { Button } from "./button.js";
-import { Shape } from "./shape.js";
+import { Shape, TYPE_NAMES } from "./shape.js";
 import { drawText } from "./render.js";
 import { tabs, generalTab } from "./tabs.js";
 import { encode, decode, saveToStorage, loadFromStorage } from "./save.js";
-import { renderDebugPanel } from "./debug.js";
+import { renderDebugPanel, updateDebug, shapeUnderMouse } from "./debug.js";
+import { formatNumber } from "./utils.js";
 
 game.init({ Room, tabs, generalTab });
 
@@ -36,16 +37,28 @@ function frame(now) {
 		if (game.shapes.length === state.shapesCap) nextSpawnTime = now;
 		nextSpawnTime += (0.5 + Math.random() * 0.5) * state.shapesSpawnInterval;
 	}
+	updateDebug();
 	game.update();
 	game.render(drawText);
 	try {
 		saveButton.render(game.ctx, 6 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Save", false);
 		loadButton.render(game.ctx, 106 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Load", false);
 		renderDebugPanel(game.ctx);
+		const hovered = shapeUnderMouse();
+		if (hovered) {
+			const s = game.scale;
+			const lineH = 28 * s;
+			const x = 12 * s;
+			const yBase = game.height - 12 * s - lineH * 3;
+			drawText(game.ctx, TYPE_NAMES[hovered.type], x, yBase, false, true, false, 28 * s);
+			drawText(game.ctx, "Tier " + hovered.layers, x, yBase + lineH, false, true, false, 24 * s);
+			drawText(game.ctx, formatNumber(hovered.score) + " score", x, yBase + lineH * 2, false, true, false, 24 * s);
+		}
 	} catch (e) {
 		console.error(e);
 	}
 	mouse.resetClicks();
+	keys.resetFrame();
 	requestAnimationFrame(frame);
 }
 

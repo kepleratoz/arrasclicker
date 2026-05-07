@@ -13,6 +13,7 @@ export function shapeRarityFromBuff(buff) {
 	return 1 + buff;
 }
 
+export const TYPE_NAMES = ["Egg", "Square", "Triangle", "Pentagon", "Hexagon", "Heptagon", "Octagon", "Nonagon"];
 const TYPE_COLORS = [colors.egg, colors.square, colors.triangle, colors.pentagon, colors.hexagon, colors.heptagon, colors.octagon, colors.nonagon];
 const RARITY_COLORS = [colors.shiny, colors.legendary, colors.shadow, colors.ultra];
 const TYPE_SIZES = [5, 20, 20, 26, 28, 56, 112, 224];
@@ -103,7 +104,7 @@ export class Shape {
 	update() {
 		if (this.layers < state.layersCaps[this.type] && performance.now() > this.evoTime) this.evolve();
 		this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
-		if (mouse.leftClick || mouse.right) {
+		if ((mouse.leftClick || mouse.right) && !game.debugMode) {
 			const screenScale = game.scale * game.room.fov;
 			const dx = mouse.x - this.pos.x * screenScale;
 			const dy = mouse.y - this.pos.y * screenScale;

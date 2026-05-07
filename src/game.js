@@ -15,6 +15,8 @@ class Game {
 		this.room = null;
 		this.tabs = [];
 		this.currentTab = null;
+		this.debugMode = null; // null | "spawn" | "upgrade"
+		this.debugSelectedShape = null;
 	}
 
 	init({ Room, tabs, generalTab }) {

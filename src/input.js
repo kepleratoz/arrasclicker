@@ -30,7 +30,22 @@ class Mouse {
 
 export const mouse = new Mouse();
 
+class Keys {
+	pressed = new Set();
+	justPressed = new Set();
+	down(e) {
+		if (!this.pressed.has(e.code)) this.justPressed.add(e.code);
+		this.pressed.add(e.code);
+	}
+	up(e) { this.pressed.delete(e.code); }
+	resetFrame() { this.justPressed.clear(); }
+}
+
+export const keys = new Keys();
+
 window.addEventListener("mousemove", (e) => mouse.move(e));
 window.addEventListener("mousedown", (e) => mouse.down(e));
 window.addEventListener("mouseup", (e) => mouse.up(e));
 window.addEventListener("contextmenu", (e) => e.preventDefault());
+window.addEventListener("keydown", (e) => keys.down(e));
+window.addEventListener("keyup", (e) => keys.up(e));
