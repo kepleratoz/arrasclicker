@@ -29,9 +29,13 @@ export function decode(encoded) {
 	}
 }
 
-const SAVE_KEY = "arrasclicker_save";
+export const SAVE_KEY = "arrasclicker_save";
+
+let saveSuspended = false;
+export function suspendSave() { saveSuspended = true; }
 
 export function saveToStorage() {
+	if (saveSuspended) return;
 	try { localStorage.setItem(SAVE_KEY, encode()); }
 	catch (e) { console.error("Save failed:", e); }
 }

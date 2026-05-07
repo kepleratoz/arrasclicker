@@ -4,7 +4,7 @@ import { darken } from "./utils.js";
 import { drawPolygon } from "./render.js";
 import { makeShapeData } from "./shape.js";
 import { game } from "./game.js";
-import { generalUpgrades, eggUpgrades, squareUpgrades, triangleUpgrades, pentagonUpgrades } from "./upgrades.js";
+import { generalUpgrades, eggUpgrades, squareUpgrades, triangleUpgrades, pentagonUpgrades, tankUpgrades } from "./upgrades.js";
 
 export class Tab {
 	constructor(name, upgrades, color, logo, isUnlocked) {
@@ -47,9 +47,7 @@ export const squareTab = new Tab("Square", squareUpgrades, "#efc74b", makeShapeD
 export const triangleTab = new Tab("Triangle", triangleUpgrades, "#e7896d", makeShapeData(2, -1, 1), () => state.trianglesUnlocked);
 export const pentagonTab = new Tab("Pentagon", pentagonUpgrades, "#8d6adf", makeShapeData(3, -1, 1), () => state.pentagonsUnlocked);
 export const hexagonTab = new Tab("Hexagon", [], "#7adbba", makeShapeData(4, -1, 1), () => state.hexagonsUnlocked);
-export const heptagonTab = new Tab("Heptagon", [], "#8abc3f", makeShapeData(5, -1, 1), () => state.heptagonsUnlocked);
-export const octagonTab = new Tab("Octagon", [], "#cc669c", makeShapeData(6, -1, 1), () => state.octagonsUnlocked);
-export const nonagonTab = new Tab("Nonagon", [], "#dbdbdb", makeShapeData(7, -1, 1), () => state.nonagonsUnlocked);
+export const tankTab = new Tab("Tank Upgrades", tankUpgrades, "#58b0d0", null, () => state.tankCount >= 1);
 
 export const tabs = [
 	generalTab,
@@ -58,7 +56,5 @@ export const tabs = [
 	triangleTab,
 	pentagonTab,
 	hexagonTab,
-	heptagonTab,
-	octagonTab,
-	nonagonTab,
+	tankTab,
 ];

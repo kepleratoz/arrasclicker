@@ -3,6 +3,7 @@ import { Button } from "./button.js";
 import { game } from "./game.js";
 import { mouse, keys } from "./input.js";
 import { Shape, makeShapeData, TYPE_NAMES } from "./shape.js";
+import { suspendSave, SAVE_KEY } from "./save.js";
 import { Vec2 } from "./utils.js";
 import { drawText } from "./render.js";
 
@@ -12,9 +13,6 @@ const SHAPE_KINDS = [
 	{ name: "Triangle", index: 2, unlockKey: "trianglesUnlocked" },
 	{ name: "Pentagon", index: 3, unlockKey: "pentagonsUnlocked" },
 	{ name: "Hexagon", index: 4, unlockKey: "hexagonsUnlocked" },
-	{ name: "Heptagon", index: 5, unlockKey: "heptagonsUnlocked" },
-	{ name: "Octagon", index: 6, unlockKey: "octagonsUnlocked" },
-	{ name: "Nonagon", index: 7, unlockKey: "nonagonsUnlocked" },
 ];
 
 function unlockAllShapes() {
@@ -88,7 +86,7 @@ const resetButton = new Button(handleReset, "#222222");
 let panelOpen = false;
 
 function handleSpawnMode() {
-	for (let i = 0; i < 8; ++i) {
+	for (let i = 0; i < SHAPE_KINDS.length; ++i) {
 		if (keys.justPressed.has(NUMBER_CODES[i])) {
 			spawnAt(i, worldFromMouse());
 		}
@@ -143,7 +141,8 @@ function handleReset() {
 	resetClickTimer = now;
 	resetClicks += 1;
 	if (resetClicks >= 3) {
-		try { localStorage.removeItem("arrasclicker_save"); } catch (e) {}
+		suspendSave();
+		try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
 		location.reload();
 	}
 }
@@ -179,7 +178,7 @@ export function renderDebugPanel(ctx) {
 
 	if (game.debugMode) {
 		const banner = game.debugMode === "spawn"
-			? "SPAWN MODE — press 1-8 at cursor to spawn"
+			? "SPAWN MODE — press 1-5 at cursor to spawn"
 			: game.debugMode === "upgrade"
 			? "UPGRADE MODE — click shape, press 1-5 (tier), ESC to cancel"
 			: "EDITION MODE — click shape, press 1-5 (rarity), ESC to cancel";

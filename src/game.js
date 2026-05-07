@@ -10,6 +10,7 @@ class Game {
 		this.height = 0;
 		this.scale = 1;
 		this.shapes = [];
+		this.tanks = [];
 		this.flyingText = [];
 		// `room`, `tabs`, `currentTab` are wired up in init() after circular imports settle.
 		this.room = null;
@@ -36,6 +37,7 @@ class Game {
 			}
 			if (shape.isDead()) this.shapes.splice(i, 1);
 		}
+		for (const tank of this.tanks) tank.update();
 		for (let i = this.flyingText.length - 1; i > -1; --i) {
 			const ft = this.flyingText[i];
 			ft.y -= 1;
@@ -51,6 +53,7 @@ class Game {
 		this.room.render(ctx);
 
 		for (const shape of this.shapes) shape.render(ctx);
+		for (const tank of this.tanks) tank.render(ctx);
 
 		for (const ft of this.flyingText) {
 			ctx.globalAlpha = ft.alpha;

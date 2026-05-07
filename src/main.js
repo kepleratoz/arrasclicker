@@ -8,11 +8,13 @@ import { drawText } from "./render.js";
 import { tabs, generalTab } from "./tabs.js";
 import { encode, decode, saveToStorage, loadFromStorage } from "./save.js";
 import { renderDebugPanel, updateDebug, shapeUnderMouse } from "./debug.js";
+import { syncTanks } from "./tank.js";
 import { formatNumber } from "./utils.js";
 
 game.init({ Room, tabs, generalTab });
 
 loadFromStorage();
+syncTanks();
 setInterval(saveToStorage, 5000);
 window.addEventListener("beforeunload", saveToStorage);
 

@@ -1,7 +1,11 @@
 import { state } from "./state.js";
-import { Button } from "./button.js";
+import { Button, SliderButton } from "./button.js";
 import { colors, formatNumber } from "./utils.js";
 import { shapeTypeFromBuff, shapeRarityFromBuff } from "./shape.js";
+import { syncTanks } from "./tank.js";
+
+const RARITY_TIER_NAMES = ["Normal", "Shiny", "Legendary", "Shadow", "Ultra"];
+const RARITY_TIER_COLORS = ["#bbbbbb", colors.shiny, colors.legendary, colors.shadow, colors.ultra];
 
 // ---------- Egg ----------
 class EggEvolution {
@@ -58,12 +62,25 @@ class ShinyChance {
 class ArenaFov {
 	button = new Button(() => { state.score -= this.cost(); state.arenaFovUpgrades += 1; }, colors.darkArena);
 	getLabel() { return "Increase Arena (" + formatNumber(state.arenaFovUpgrades) + ")"; }
-	max() { return state.arenaFovUpgrades >= 3; }
+	max() { return state.arenaFovUpgrades >= 1; }
 	cost() { return Math.pow(1e5, Math.pow(state.arenaFovUpgrades + 1, 3)) * 100; }
 	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
 	isDisabled() { return state.score < this.cost() || this.max(); }
 }
-export const generalUpgrades = [new ShapesCap(), new SpawnInterval(), new ShinyChance(), new ArenaFov()];
+class AddTank {
+	button = new Button(() => { state.score -= this.cost(); state.tankCount += 1; syncTanks(); }, "#58b0d0");
+	getLabel() { return "Add Tank"; }
+	requirement() { return state.arenaFovUpgrades >= 1; }
+	max() { return state.tankCount >= 1; }
+	cost() { return 1e12; }
+	getSecondary() {
+		if (this.max()) return "MAX";
+		if (!this.requirement()) return "Requires Arena Tier 1";
+		return formatNumber(this.cost()) + " score.";
+	}
+	isDisabled() { return this.max() || !this.requirement() || state.score < this.cost(); }
+}
+export const generalUpgrades = [new ShapesCap(), new SpawnInterval(), new ShinyChance(), new ArenaFov(), new AddTank()];
 
 // ---------- Square ----------
 class SquareEvolution {
@@ -194,6 +211,58 @@ class UnlockHexagons {
 	}
 	isDisabled() { return state.hexagonsUnlocked || !this.requirement(); }
 }
+// ---------- Tank ----------
+const TANK_COLOR = "#58b0d0";
+class TankReload {
+	button = new Button(() => { state.score -= this.cost(); state.tankReloadUpgrades += 1; }, TANK_COLOR);
+	getLabel() { return "-10% Reload (" + state.tankReloadUpgrades + "/5)"; }
+	max() { return state.tankReloadUpgrades >= 5; }
+	cost() { return 1e12 * Math.pow(2, state.tankReloadUpgrades); }
+	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
+	isDisabled() { return this.max() || state.score < this.cost(); }
+}
+class TankDamage {
+	button = new Button(() => { state.score -= this.cost(); state.tankDamageUpgrades += 1; }, TANK_COLOR);
+	getLabel() { return "+0.5 Damage (" + state.tankDamageUpgrades + "/5)"; }
+	max() { return state.tankDamageUpgrades >= 5; }
+	cost() { return 1e12 * Math.pow(2, state.tankDamageUpgrades); }
+	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
+	isDisabled() { return this.max() || state.score < this.cost(); }
+}
+class TankPenetration {
+	button = new Button(() => { state.score -= this.cost(); state.tankPenetrationUpgrades += 1; }, TANK_COLOR);
+	getLabel() { return "+1 Penetration, +20% Range (" + state.tankPenetrationUpgrades + "/3)"; }
+	max() { return state.tankPenetrationUpgrades >= 3; }
+	cost() { return 1e14 * Math.pow(2, state.tankPenetrationUpgrades); }
+	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
+	isDisabled() { return this.max() || state.score < this.cost(); }
+}
+class TankSpeed {
+	button = new Button(() => { state.score -= this.cost(); state.tankSpeedUpgrades += 1; }, TANK_COLOR);
+	getLabel() { return "+33% Movement Speed (" + state.tankSpeedUpgrades + "/3)"; }
+	max() { return state.tankSpeedUpgrades >= 3; }
+	cost() { return 1e14 * Math.pow(2, state.tankSpeedUpgrades); }
+	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
+	isDisabled() { return this.max() || state.score < this.cost(); }
+}
+class TankRarityCap {
+	button = new SliderButton(
+		RARITY_TIER_NAMES,
+		() => state.tankRarityCap,
+		(idx) => { state.tankRarityCap = idx; },
+		TANK_COLOR,
+		RARITY_TIER_COLORS,
+	);
+	getLabel() {
+		return state.tankRarityCap === 0
+			? "Target Rarity Cap: FROZEN"
+			: "Target Rarity Cap (won't target " + RARITY_TIER_NAMES[state.tankRarityCap] + "+)";
+	}
+	getSecondary() { return ""; }
+	isDisabled() { return false; }
+}
+export const tankUpgrades = [new TankReload(), new TankDamage(), new TankPenetration(), new TankSpeed(), new TankRarityCap()];
+
 export const pentagonUpgrades = [
 	new PentagonEvolution(),
 	new PentagonEvoTime(),

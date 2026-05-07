@@ -24,6 +24,7 @@ export function makeShapeData(type, rarity, layers) {
 	const color = rarity >= 0 ? RARITY_COLORS[rarity] : TYPE_COLORS[type];
 	return {
 		type,
+		rarity,
 		size: TYPE_SIZES[type],
 		sides: TYPE_SIDES[type],
 		color,
@@ -32,7 +33,7 @@ export function makeShapeData(type, rarity, layers) {
 }
 
 export function randomShapeType(typeRoll, rarityRoll, layers) {
-	const type = Math.min(8, shapeTypeFromBuff(typeRoll) | 0) - 1;
+	const type = Math.min(5, shapeTypeFromBuff(typeRoll) | 0) - 1;
 	const rarity = Math.min(state.rarityCap, Math.floor(shapeRarityFromBuff(rarityRoll)) - 2);
 	return makeShapeData(type, rarity, layers);
 }
@@ -51,6 +52,7 @@ export class Shape {
 		this.score = 0;
 		this.evoTime = 0;
 		this.type = 0;
+		this.rarity = -1;
 		this.health = 1;
 	}
 	static random() {
@@ -78,6 +80,7 @@ export class Shape {
 		this.size = data.size;
 		this.score = data.score;
 		this.type = data.type;
+		this.rarity = data.rarity ?? -1;
 		this.health = data.type + 1;
 		const sides = Math.max(3, this.sides);
 		const cosFactor = Math.cos(Math.PI / sides);
