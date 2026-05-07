@@ -1,0 +1,64 @@
+import { state } from "./state.js";
+import { Button } from "./button.js";
+import { darken } from "./utils.js";
+import { drawPolygon } from "./render.js";
+import { makeShapeData } from "./shape.js";
+import { game } from "./game.js";
+import { generalUpgrades, eggUpgrades, squareUpgrades, triangleUpgrades, pentagonUpgrades } from "./upgrades.js";
+
+export class Tab {
+	constructor(name, upgrades, color, logo, isUnlocked) {
+		this.name = name;
+		this.upgrades = upgrades;
+		this.color = color;
+		this.logo = logo;
+		this.isUnlocked = isUnlocked;
+		this.btn = new Button(() => { game.currentTab = this; }, this.color);
+	}
+	render(ctx, x, y) {
+		const bx = x + game.width / 2 + 6 * game.scale;
+		const by = y + 320 * game.scale;
+		const w = 300 * game.scale;
+		const h = 50 * game.scale;
+		this.btn.render(ctx, bx, by, w, h, this.name, game.currentTab === this);
+		if (this.logo) {
+			const logo = this.logo;
+			const inv = 1 / game.scale / game.room.fov;
+			drawPolygon(
+				ctx,
+				(bx + 26) * inv,
+				(by + h / 2) * inv,
+				Math.min(20, logo.size * 2) * inv * game.scale,
+				Math.PI / 4,
+				logo.sides,
+			);
+			ctx.fillStyle = logo.color;
+			ctx.strokeStyle = darken(logo.color);
+			ctx.lineWidth = 4 * game.scale;
+			ctx.fill();
+			ctx.stroke();
+		}
+	}
+}
+
+export const generalTab = new Tab("General", generalUpgrades, "#3ca4cb");
+export const eggTab = new Tab("Egg", eggUpgrades, "#e8ebf7", makeShapeData(0, -1, 1));
+export const squareTab = new Tab("Square", squareUpgrades, "#efc74b", makeShapeData(1, -1, 1), () => state.squaresUnlocked);
+export const triangleTab = new Tab("Triangle", triangleUpgrades, "#e7896d", makeShapeData(2, -1, 1), () => state.trianglesUnlocked);
+export const pentagonTab = new Tab("Pentagon", pentagonUpgrades, "#8d6adf", makeShapeData(3, -1, 1), () => state.pentagonsUnlocked);
+export const hexagonTab = new Tab("Hexagon", [], "#7adbba", makeShapeData(4, -1, 1), () => state.hexagonsUnlocked);
+export const heptagonTab = new Tab("Heptagon", [], "#8abc3f", makeShapeData(5, -1, 1), () => state.heptagonsUnlocked);
+export const octagonTab = new Tab("Octagon", [], "#cc669c", makeShapeData(6, -1, 1), () => state.octagonsUnlocked);
+export const nonagonTab = new Tab("Nonagon", [], "#dbdbdb", makeShapeData(7, -1, 1), () => state.nonagonsUnlocked);
+
+export const tabs = [
+	generalTab,
+	eggTab,
+	squareTab,
+	triangleTab,
+	pentagonTab,
+	hexagonTab,
+	heptagonTab,
+	octagonTab,
+	nonagonTab,
+];
