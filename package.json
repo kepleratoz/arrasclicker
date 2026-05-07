@@ -1,0 +1,12 @@
+{
+  "name": "arrasclicker-modular",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:dev": "node build.mjs --no-minify"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}
