@@ -32,7 +32,8 @@ export function decode(encoded) {
 export const SAVE_KEY = "arrasclicker_save";
 
 let saveSuspended = false;
-export function suspendSave() { saveSuspended = true; }
+let autoSaveInterval = null;
+const beforeUnloadHandler = () => saveToStorage();
 
 export function saveToStorage() {
 	if (saveSuspended) return;
@@ -47,4 +48,18 @@ export function loadFromStorage() {
 	} catch (e) {
 		console.error("Load failed:", e);
 	}
+}
+
+export function enableAutoSave() {
+	if (autoSaveInterval !== null) return;
+	autoSaveInterval = setInterval(saveToStorage, 5000);
+	window.addEventListener("beforeunload", beforeUnloadHandler);
+}
+
+export function resetGame() {
+	saveSuspended = true;
+	if (autoSaveInterval !== null) { clearInterval(autoSaveInterval); autoSaveInterval = null; }
+	window.removeEventListener("beforeunload", beforeUnloadHandler);
+	try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+	location.reload();
 }

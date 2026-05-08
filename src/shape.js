@@ -33,7 +33,8 @@ export function makeShapeData(type, rarity, layers) {
 }
 
 export function randomShapeType(typeRoll, rarityRoll, layers) {
-	const type = Math.min(5, shapeTypeFromBuff(typeRoll) | 0) - 1;
+	const cap = state.hexagonsUnlocked ? 5 : 4;
+	const type = Math.min(cap, shapeTypeFromBuff(typeRoll) | 0) - 1;
 	const rarity = Math.min(state.rarityCap, Math.floor(shapeRarityFromBuff(rarityRoll)) - 2);
 	return makeShapeData(type, rarity, layers);
 }

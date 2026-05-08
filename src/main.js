@@ -6,17 +6,16 @@ import { Button } from "./button.js";
 import { Shape, TYPE_NAMES } from "./shape.js";
 import { drawText } from "./render.js";
 import { tabs, generalTab } from "./tabs.js";
-import { encode, decode, saveToStorage, loadFromStorage } from "./save.js";
+import { encode, decode, saveToStorage, loadFromStorage, enableAutoSave } from "./save.js";
 import { renderDebugPanel, updateDebug, shapeUnderMouse } from "./debug.js";
-import { syncTanks } from "./tank.js";
+import { syncTanks, tankUnderMouse } from "./tank.js";
 import { formatNumber } from "./utils.js";
 
 game.init({ Room, tabs, generalTab });
 
 loadFromStorage();
 syncTanks();
-setInterval(saveToStorage, 5000);
-window.addEventListener("beforeunload", saveToStorage);
+enableAutoSave();
 
 game.resize();
 window.addEventListener("resize", () => game.resize());
@@ -46,8 +45,25 @@ function frame(now) {
 		saveButton.render(game.ctx, 6 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Save", false);
 		loadButton.render(game.ctx, 106 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Load", false);
 		renderDebugPanel(game.ctx);
-		const hovered = shapeUnderMouse();
-		if (hovered) {
+		const hoveredTank = tankUnderMouse();
+		const hovered = hoveredTank ? null : shapeUnderMouse();
+		if (hoveredTank) {
+			const s = game.scale;
+			const lineH = 28 * s;
+			const x = 12 * s;
+			const yBase = game.height - 12 * s - lineH * 2;
+			drawText(game.ctx, hoveredTank.classification, x, yBase, false, true, false, 28 * s);
+			drawText(
+				game.ctx,
+				"Lvl " + hoveredTank.level + " (" + formatNumber(hoveredTank.xpProgress()) + "/" + formatNumber(hoveredTank.xpNeeded()) + ")",
+				x,
+				yBase + lineH,
+				false,
+				true,
+				false,
+				24 * s,
+			);
+		} else if (hovered) {
 			const s = game.scale;
 			const lineH = 28 * s;
 			const x = 12 * s;

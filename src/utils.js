@@ -1,12 +1,12 @@
 export function formatNumber(n) {
-	if (n >= 1e6) return n.toExponential(3).replace("+", "");
-	if (n >= 1000 && Number.isInteger(n)) {
-		const s = n + "";
-		const len = s.length;
-		return s.slice(0, len - 3) + "," + s.slice(len - 3, len);
-	}
+	if (n >= 1e15) return n.toExponential(3).replace("+", "");
 	const intPart = Math.trunc(n);
 	const frac = n - intPart;
+	if (n >= 1000) {
+		const intStr = intPart.toLocaleString("en-US");
+		if (Number.isInteger(n)) return intStr;
+		return intStr + (Math.round(frac * 100) / 100 + "").slice(1);
+	}
 	const fracStr = (Math.round(frac * 100) / 100 + "").slice(1);
 	return intPart + fracStr;
 }

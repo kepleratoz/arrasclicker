@@ -9,6 +9,8 @@ export const state = {
 	triangleEvoTimeUpgrades: 0,
 	pentagonBuffUpgrades: 0,
 	pentagonEvoTimeUpgrades: 0,
+	hexagonBuffUpgrades: 0,
+	hexagonEvoTimeUpgrades: 0,
 	arenaFovUpgrades: 0,
 	tankCount: 0,
 	tankReloadUpgrades: 0,

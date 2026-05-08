@@ -3,7 +3,7 @@ import { Button } from "./button.js";
 import { game } from "./game.js";
 import { mouse, keys } from "./input.js";
 import { Shape, makeShapeData, TYPE_NAMES } from "./shape.js";
-import { suspendSave, SAVE_KEY } from "./save.js";
+import { resetGame } from "./save.js";
 import { Vec2 } from "./utils.js";
 import { drawText } from "./render.js";
 
@@ -140,11 +140,7 @@ function handleReset() {
 	if (now - resetClickTimer > 3000) resetClicks = 0;
 	resetClickTimer = now;
 	resetClicks += 1;
-	if (resetClicks >= 3) {
-		suspendSave();
-		try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
-		location.reload();
-	}
+	if (resetClicks >= 3) resetGame();
 }
 function resetLabel() {
 	if (resetClicks === 0) return "Reset Game";

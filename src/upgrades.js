@@ -69,10 +69,10 @@ class ArenaFov {
 }
 class AddTank {
 	button = new Button(() => { state.score -= this.cost(); state.tankCount += 1; syncTanks(); }, "#58b0d0");
-	getLabel() { return "Add Tank"; }
+	getLabel() { return "Add Tank (" + state.tankCount + "/2)"; }
 	requirement() { return state.arenaFovUpgrades >= 1; }
-	max() { return state.tankCount >= 1; }
-	cost() { return 1e12; }
+	max() { return state.tankCount >= 2; }
+	cost() { return state.tankCount === 0 ? 1e12 : 1e14; }
 	getSecondary() {
 		if (this.max()) return "MAX";
 		if (!this.requirement()) return "Requires Arena Tier 1";
@@ -211,6 +211,33 @@ class UnlockHexagons {
 	}
 	isDisabled() { return state.hexagonsUnlocked || !this.requirement(); }
 }
+
+// ---------- Hexagon ----------
+class HexagonEvolution {
+	button = new Button(() => { state.score -= this.cost(); state.layersCaps[4] += 1; }, colors.hexagon);
+	getLabel() { return "+1 Evolution (" + (state.layersCaps[4] - 1) + "/5)"; }
+	max() { return state.layersCaps[4] > 5; }
+	cost() { return Math.pow(5, state.layersCaps[4] + 21); }
+	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score"; }
+	isDisabled() { return this.max() || state.score < this.cost(); }
+}
+class HexagonEvoTime {
+	button = new Button(() => { state.score -= this.cost(); state.hexagonEvoTimeUpgrades += 1; state.shapeEvoNerf[4] *= 1.25; }, colors.hexagon);
+	getLabel() { return "Decrease Evolution Time (" + formatNumber(state.shapeEvoNerf[4]) + "x less)"; }
+	cost() { return Math.round(Math.pow(8, state.hexagonEvoTimeUpgrades + 11)); }
+	getSecondary() { return formatNumber(this.cost()) + " score"; }
+	isDisabled() { return state.score < this.cost(); }
+}
+class HexagonBuff {
+	button = new Button(() => { state.score -= this.cost(); state.hexagonBuffUpgrades += 1; state.shapeTypeBuff *= 1.13; }, colors.hexagon);
+	getLabel() { return "Increase Hexagon Spawn Chance (" + formatNumber(state.shapeTypeBuff) + "x)"; }
+	max() { return state.hexagonBuffUpgrades >= 10; }
+	cost() { return Math.round(Math.pow(2, state.hexagonBuffUpgrades + 42)); }
+	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
+	isDisabled() { return state.score < this.cost() || this.max(); }
+}
+export const hexagonUpgrades = [new HexagonEvolution(), new HexagonEvoTime(), new HexagonBuff()];
+
 // ---------- Tank ----------
 const TANK_COLOR = "#58b0d0";
 class TankReload {
