@@ -111,7 +111,7 @@ function frame(now) {
 	while (game.shapes.length < state.shapesCap && now > nextSpawnTime) {
 		game.shapes.push(Shape.random());
 		if (game.shapes.length === state.shapesCap) nextSpawnTime = now;
-		nextSpawnTime += (0.5 + Math.random() * 0.5) * state.shapesSpawnInterval;
+		nextSpawnTime += (0.5 + Math.random() * 0.5) * Math.max(1000, state.shapesSpawnInterval);
 	}
 	updateDebug();
 	handleTankClicks();

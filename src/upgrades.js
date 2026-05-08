@@ -40,17 +40,15 @@ class ShapesCap {
 	isDisabled() { return state.shapesCap >= 100 || state.score < this.cost(); }
 }
 class SpawnInterval {
-	button = new Button(() => { state.score -= this.cost(); state.spawnIntervalUpgrades += 1; state.shapesSpawnInterval /= 1.1; }, colors.blue);
+	button = new Button(() => { state.score -= this.cost(); state.spawnIntervalUpgrades += 1; state.shapesSpawnInterval -= 100; }, colors.blue);
 	getLabel() {
-		let s = state.shapesSpawnInterval / 1000;
-		let formatted;
-		if (s < 1) { s = 1 / s; formatted = s.toFixed(2) + "/s"; }
-		else formatted = s.toFixed(2) + "s";
-		return "-10% Spawn Interval (" + formatted + ")";
+		const s = state.shapesSpawnInterval / 1000;
+		return "-5% Spawn Interval (" + s.toFixed(2) + "s) (" + state.spawnIntervalUpgrades + "/10)";
 	}
+	max() { return state.spawnIntervalUpgrades >= 10; }
 	cost() { return Math.round(10 * Math.pow(1.5, Math.pow(state.spawnIntervalUpgrades, 1.25))); }
-	getSecondary() { return formatNumber(this.cost()) + " score"; }
-	isDisabled() { return state.score < this.cost(); }
+	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score"; }
+	isDisabled() { return this.max() || state.score < this.cost(); }
 }
 class ShinyChance {
 	button = new Button(() => { state.score -= this.cost(); state.shinyChanceUpgrades += 1; state.shapeRarityBuff *= 1.05; }, colors.shiny);

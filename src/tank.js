@@ -18,7 +18,7 @@ const BASE_BULLET_LIFE = 90;
 const TANK_SIZE = 12;
 const BASE_TANK_SPEED = 1.2;
 const UPGRADE_LEVEL = 15;
-const UPGRADES_ENABLED = false;
+const UPGRADES_ENABLED = true;
 
 function tankShootInterval() { return BASE_SHOOT_INTERVAL * Math.pow(0.9, state.tankReloadUpgrades); }
 function tankCanTarget(shape) { return shape.rarity < state.tankRarityCap - 1; }
