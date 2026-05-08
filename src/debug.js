@@ -116,8 +116,8 @@ function applyUpgradeKey(sel, n) {
 }
 
 function applyEditionKey(sel, n) {
-	if (n > 5) return;
-	const rarity = n - 2; // 1=common(-1), 2=shiny(0), 3=legendary(1), 4=shadow(2), 5=ultra(3)
+	if (n > 6) return;
+	const rarity = n === 6 ? 4 : n - 2; // 1=common(-1), 2=shiny(0), 3=legendary(1), 4=shadow(2), 5=ultra(3), 6=ethereal(4)
 	sel.setType(makeShapeData(sel.type, rarity, sel.layers));
 }
 
@@ -177,7 +177,7 @@ export function renderDebugPanel(ctx) {
 			? "SPAWN MODE — press 1-5 at cursor to spawn"
 			: game.debugMode === "upgrade"
 			? "UPGRADE MODE — click shape, press 1-5 (tier), ESC to cancel"
-			: "EDITION MODE — click shape, press 1-5 (rarity), ESC to cancel";
+			: "EDITION MODE — click shape, press 1-6 (rarity, 6=Ethereal), ESC to cancel";
 		drawText(ctx, banner, game.width / 2, 60 * s, false, true, true, 22 * s);
 		if ((game.debugMode === "upgrade" || game.debugMode === "edition") && game.debugSelectedShape && !game.debugSelectedShape.isDead()) {
 			const sh = game.debugSelectedShape;

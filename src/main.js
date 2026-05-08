@@ -12,21 +12,51 @@ import { syncTanks, tankUnderMouse, renderTankPreview } from "./tank.js";
 import { TANK_DEFS } from "./tankDefs.js";
 import { formatNumber } from "./utils.js";
 
-function getTankUpgradeButtons() {
+let upgradePanelAnim = 1;
+let upgradePanelLastTank = null;
+// OSA's iconColorOrder = [10, 11, 12, 15, 13, 2, 14, 4, 5, 1, 0, 3] resolved through gameDraw.getColor.
+const UPGRADE_BOX_PALETTE = [
+	"#3ca4cb", // 10 blue
+	"#8abc3f", // 11 green
+	"#e03e41", // 12 red
+	"#cc669c", // 15 magenta
+	"#efc74b", // 13 gold
+	"#e7896d", // 2 orange (triangle)
+	"#8d6adf", // 14 purple
+	"#7adbba", // 4 aqua (hexagon)
+	"#ef99c3", // 5 pink
+	"#b9e87e", // 1 lgreen (shiny)
+	"#7ad3db", // 0 teal (legendary)
+	"#fdf380", // 3 yellow (neutral)
+];
+
+function getTankUpgradeBoxes(animOffset) {
 	const tank = game.selectedTank;
 	if (!tank) return [];
 	const def = TANK_DEFS[tank.defKey];
 	if (!def.upgrades || !tank.canUpgrade()) return [];
 	const s = game.scale;
-	const w = 200 * s;
-	const h = 70 * s;
-	const margin = 6 * s;
-	const x = game.width - w - margin;
-	const buttons = [];
+	const boxSize = 110 * s;
+	const gap = 12 * s;
+	const margin = 16 * s;
+	const cols = Math.min(def.upgrades.length, 3);
+	const totalW = cols * boxSize + (cols - 1) * gap;
+	const slide = (animOffset ?? 0) * (totalW + margin * 2);
+	const xStart = game.width - totalW - margin + slide;
+	const boxes = [];
 	for (let i = 0; i < def.upgrades.length; ++i) {
-		buttons.push({ defKey: def.upgrades[i], x, y: margin + i * (h + 4 * s), w, h });
+		const col = i % cols;
+		const row = Math.floor(i / cols);
+		boxes.push({
+			defKey: def.upgrades[i],
+			x: xStart + col * (boxSize + gap),
+			y: margin + row * (boxSize + gap),
+			w: boxSize,
+			h: boxSize,
+			color: UPGRADE_BOX_PALETTE[i % UPGRADE_BOX_PALETTE.length],
+		});
 	}
-	return buttons;
+	return boxes;
 }
 
 function handleTankClicks() {
@@ -47,8 +77,8 @@ function handleTankClicks() {
 	if (game.controlledTank) return;
 	if (!mouse.leftRelease) return;
 	if (game.selectedTank) {
-		const buttons = getTankUpgradeButtons();
-		for (const b of buttons) {
+		const boxes = getTankUpgradeBoxes(0);
+		for (const b of boxes) {
 			if (mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h) {
 				game.selectedTank.upgradeTo(b.defKey);
 				mouse.leftRelease = false;
@@ -66,23 +96,49 @@ function handleTankClicks() {
 }
 
 function renderTankUpgradePanel() {
-	const buttons = getTankUpgradeButtons();
-	if (buttons.length === 0) return;
+	const tank = game.selectedTank;
+	const visible = tank && TANK_DEFS[tank.defKey].upgrades && tank.canUpgrade();
+	if (tank !== upgradePanelLastTank) {
+		upgradePanelAnim = 1;
+		upgradePanelLastTank = tank;
+	}
+	if (!visible) return;
+	upgradePanelAnim *= 0.78;
+	if (upgradePanelAnim < 0.005) upgradePanelAnim = 0;
+	const boxes = getTankUpgradeBoxes(upgradePanelAnim);
+	if (boxes.length === 0) return;
 	const ctx = game.ctx;
 	const s = game.scale;
-	for (const b of buttons) {
-		const hovered = mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
-		ctx.lineWidth = 8 * s;
-		ctx.strokeStyle = "#222";
-		ctx.strokeRect(b.x, b.y, b.w, b.h);
-		ctx.fillStyle = hovered ? "#3a8ed6" : "#2a2a2a";
+	const spin = (Date.now() * 0.001) % (Math.PI * 2);
+	for (const b of boxes) {
+		const hovered = upgradePanelAnim < 0.05 && mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+		// Box fill at OSA's 0.6 alpha
+		ctx.globalAlpha = 0.6;
+		ctx.fillStyle = b.color;
 		ctx.fillRect(b.x, b.y, b.w, b.h);
-		const previewSize = (b.h - 16 * s) / 2;
-		const previewX = b.x + previewSize + 12 * s;
-		const previewY = b.y + b.h / 2;
+		// Hover overlay
+		if (hovered) {
+			ctx.globalAlpha = mouse.left ? 0.2 : 0.15;
+			ctx.fillStyle = mouse.left ? "#000000" : "#ffffff";
+			ctx.fillRect(b.x, b.y, b.w, b.h);
+		}
+		// Bottom 40% darker gradient (OSA's pseudo-3D shading)
+		ctx.globalAlpha = 0.25;
+		ctx.fillStyle = "#000000";
+		ctx.fillRect(b.x, b.y + b.h * 0.6, b.w, b.h * 0.4);
+		ctx.globalAlpha = 1;
+
+		const previewSize = b.w * 0.22;
+		const previewX = b.x + b.w / 2;
+		const previewY = b.y + b.h / 2 - 6 * s;
 		const fakeTank = { defKey: b.defKey, gunStates: TANK_DEFS[b.defKey].guns.map(() => null) };
-		renderTankPreview(ctx, fakeTank, previewX, previewY, previewSize);
-		drawText(ctx, TANK_DEFS[b.defKey].label, b.x + previewSize * 2 + 24 * s, b.y + b.h / 2, false, true, false, 22 * s);
+		renderTankPreview(ctx, fakeTank, previewX, previewY, previewSize, spin);
+		drawText(ctx, TANK_DEFS[b.defKey].label, b.x + b.w / 2, b.y + b.h - 12 * s, false, true, true, 14 * s);
+
+		// Border last so it sits on top of everything
+		ctx.strokeStyle = "#484848";
+		ctx.lineWidth = 2 * s;
+		ctx.strokeRect(b.x, b.y, b.w, b.h);
 	}
 }
 
@@ -104,6 +160,8 @@ const loadButton = new Button(() => {
 		saveToStorage();
 	}
 }, "#db9146");
+const shapeAnimButton = new Button(() => { state.shapeDeathAnimEnabled = !state.shapeDeathAnimEnabled; }, "#efc74b");
+const bulletAnimButton = new Button(() => { state.bulletDeathAnimEnabled = !state.bulletDeathAnimEnabled; }, "#58b0d0");
 
 let nextSpawnTime = 0;
 
@@ -111,7 +169,7 @@ function frame(now) {
 	while (game.shapes.length < state.shapesCap && now > nextSpawnTime) {
 		game.shapes.push(Shape.random());
 		if (game.shapes.length === state.shapesCap) nextSpawnTime = now;
-		nextSpawnTime += (0.5 + Math.random() * 0.5) * Math.max(1000, state.shapesSpawnInterval);
+		nextSpawnTime += (0.5 + Math.random() * 0.5) * Math.max(500, state.shapesSpawnInterval);
 	}
 	updateDebug();
 	handleTankClicks();
@@ -120,6 +178,8 @@ function frame(now) {
 	try {
 		saveButton.render(game.ctx, 6 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Save", false);
 		loadButton.render(game.ctx, 106 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Load", false);
+		shapeAnimButton.render(game.ctx, 206 * game.scale, 6 * game.scale, 160 * game.scale, 50 * game.scale, "Shape FX: " + (state.shapeDeathAnimEnabled ? "ON" : "OFF"), false);
+		bulletAnimButton.render(game.ctx, 366 * game.scale, 6 * game.scale, 160 * game.scale, 50 * game.scale, "Bullet FX: " + (state.bulletDeathAnimEnabled ? "ON" : "OFF"), false);
 		renderDebugPanel(game.ctx);
 		renderTankUpgradePanel();
 		const hoveredTank = game.selectedTank;

@@ -63,7 +63,7 @@ class Game {
 				if (shape === other || other.isDead()) continue;
 				shape.collide(other);
 			}
-			if (shape.isDead()) this.shapes.splice(i, 1);
+			if (shape.isFullyDead()) this.shapes.splice(i, 1);
 		}
 		for (const tank of this.tanks) tank.update();
 		for (let i = this.flyingText.length - 1; i > -1; --i) {

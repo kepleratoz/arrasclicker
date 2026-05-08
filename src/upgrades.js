@@ -43,9 +43,9 @@ class SpawnInterval {
 	button = new Button(() => { state.score -= this.cost(); state.spawnIntervalUpgrades += 1; state.shapesSpawnInterval -= 100; }, colors.blue);
 	getLabel() {
 		const s = state.shapesSpawnInterval / 1000;
-		return "-5% Spawn Interval (" + s.toFixed(2) + "s) (" + state.spawnIntervalUpgrades + "/10)";
+		return "-5% Spawn Interval (" + s.toFixed(2) + "s) (" + state.spawnIntervalUpgrades + "/15)";
 	}
-	max() { return state.spawnIntervalUpgrades >= 10; }
+	max() { return state.spawnIntervalUpgrades >= 15; }
 	cost() { return Math.round(10 * Math.pow(1.5, Math.pow(state.spawnIntervalUpgrades, 1.25))); }
 	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score"; }
 	isDisabled() { return this.max() || state.score < this.cost(); }
@@ -256,11 +256,11 @@ class TankDamage {
 	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
 	isDisabled() { return this.max() || state.score < this.cost(); }
 }
-class TankPenetration {
-	button = new Button(() => { state.score -= this.cost(); state.tankPenetrationUpgrades += 1; }, TANK_COLOR);
-	getLabel() { return "+1 Penetration, +20% Range (" + state.tankPenetrationUpgrades + "/3)"; }
-	max() { return state.tankPenetrationUpgrades >= 3; }
-	cost() { return 1e14 * Math.pow(2, state.tankPenetrationUpgrades); }
+class TankHealth {
+	button = new Button(() => { state.score -= this.cost(); state.tankHealthUpgrades += 1; }, TANK_COLOR);
+	getLabel() { return "+20% Bullet Health (" + state.tankHealthUpgrades + "/5)"; }
+	max() { return state.tankHealthUpgrades >= 5; }
+	cost() { return 1e12 * Math.pow(2, state.tankHealthUpgrades); }
 	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
 	isDisabled() { return this.max() || state.score < this.cost(); }
 }
@@ -288,11 +288,24 @@ class TankRarityCap {
 	getSecondary() { return ""; }
 	isDisabled() { return false; }
 }
-export const tankUpgrades = [new TankReload(), new TankDamage(), new TankPenetration(), new TankSpeed(), new TankRarityCap()];
+export const tankUpgrades = [new TankReload(), new TankDamage(), new TankHealth(), new TankSpeed(), new TankRarityCap()];
 
+class UnlockShadow {
+	button = new Button(() => { state.score -= this.cost(); state.rarityCap = Math.max(state.rarityCap, 2); }, colors.shadow, "rgba(34,34,34,0.4)");
+	getLabel() { return "Unlock Shadow Rarity"; }
+	cost() { return 5e10; }
+	requirement() { return state.rarityCap >= 1 && shapeRarityFromBuff(state.shapeRarityBuff) > 4; }
+	getSecondary() {
+		if (state.rarityCap >= 2) return "UNLOCKED";
+		if (!this.requirement()) return state.rarityCap < 1 ? "Unlock legendary first" : "Increase rare shapes chance further";
+		return formatNumber(this.cost()) + " score. 5x rarer than legendary.";
+	}
+	isDisabled() { return state.rarityCap >= 2 || !this.requirement() || state.score < this.cost(); }
+}
 export const pentagonUpgrades = [
 	new PentagonEvolution(),
 	new PentagonEvoTime(),
 	new PentagonBuff(),
+	new UnlockShadow(),
 	new UnlockHexagons(),
 ];

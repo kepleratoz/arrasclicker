@@ -32,7 +32,7 @@ export const TANK_DEFS = {
 	},
 	pounder: {
 		label: "Pounder",
-		guns: [{ length: 2.05, width: 1.2, x: 0, y: 0, angle: 0, shoot: { reload: 2, damage: 2, speed: 0.85, size: 1.2 } }],
+		guns: [{ length: 2.05, width: 1.2, x: 0, y: 0, angle: 0, shoot: { reload: 2, damage: 2, speed: 0.85, size: 1.2, health: 4 } }],
 	},
 	trapper: {
 		label: "Trapper",

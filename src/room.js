@@ -25,6 +25,15 @@ export class Room {
 			this.maxX * game.scale * this.fov,
 			this.maxY * game.scale * this.fov,
 		);
+		if (state.arenaFovUpgrades >= 1) {
+			const sc = game.scale * this.fov;
+			const nestW = (this.maxX / 3) * sc;
+			const nestH = (this.maxY / 3) * sc;
+			const nestX = (this.minX + this.maxX / 2) * sc - nestW / 2;
+			const nestY = (this.minY + this.maxY / 2) * sc - nestH / 2;
+			ctx.fillStyle = "rgba(181,142,253,0.32)";
+			ctx.fillRect(nestX, nestY, nestW, nestH);
+		}
 		ctx.beginPath();
 		const gridSize = 30 * game.scale * this.fov;
 		for (let x = (game.width / 2) % gridSize; x < game.width; x += gridSize) {

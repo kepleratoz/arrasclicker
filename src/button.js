@@ -4,16 +4,17 @@ import { drawText } from "./render.js";
 import { game } from "./game.js";
 
 export class Button {
-	constructor(callback, fill) {
+	constructor(callback, fill, borderColor) {
 		this.callback = callback;
 		this.fill = fill;
 		this.stroke = darken(fill, 0.75);
+		this.borderColor = borderColor ?? "#222";
 	}
 	render(ctx, x, y, w, h, label, disabled) {
 		const hovered = !disabled && mouse.x > x && mouse.y > y && mouse.x < x + w && mouse.y < y + h;
 		const pressed = hovered && mouse.left;
 		ctx.lineWidth = 12 * game.scale;
-		ctx.strokeStyle = "#222";
+		ctx.strokeStyle = this.borderColor;
 		ctx.strokeRect(x, y, w, h);
 		ctx.fillStyle = pressed ? this.stroke : this.fill;
 		ctx.fillRect(x, y, w, h);
