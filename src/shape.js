@@ -33,8 +33,8 @@ export function makeShapeData(type, rarity, layers) {
 }
 
 export function randomShapeType(typeRoll, rarityRoll, layers) {
-	const cap = state.hexagonsUnlocked ? 5 : 4;
-	const type = Math.min(cap, shapeTypeFromBuff(typeRoll) | 0) - 1;
+	let type = Math.min(4, shapeTypeFromBuff(typeRoll) | 0) - 1;
+	if (type === 3 && state.pentagonsUnlocked && Math.random() < 1 / 6) type = 4;
 	const rarity = Math.min(state.rarityCap, Math.floor(shapeRarityFromBuff(rarityRoll)) - 2);
 	return makeShapeData(type, rarity, layers);
 }
@@ -108,7 +108,7 @@ export class Shape {
 	update() {
 		if (this.layers < state.layersCaps[this.type] && performance.now() > this.evoTime) this.evolve();
 		this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
-		if ((mouse.leftClick || mouse.right) && !game.debugMode) {
+		if ((mouse.leftClick || mouse.right) && !game.debugMode && !game.controlledTank) {
 			const screenScale = game.scale * game.room.fov;
 			const dx = mouse.x - this.pos.x * screenScale;
 			const dy = mouse.y - this.pos.y * screenScale;

@@ -1,6 +1,32 @@
 import { state } from "./state.js";
-import { mouse } from "./input.js";
+import { mouse, keys } from "./input.js";
 import { formatNumber } from "./utils.js";
+
+function bulkQuantity() {
+	if (keys.pressed.has("AltLeft") || keys.pressed.has("AltRight")) return 100;
+	if (keys.pressed.has("ShiftLeft") || keys.pressed.has("ShiftRight")) return 10;
+	return 1;
+}
+
+function simulateBuy(game, upgrade, n) {
+	const snapshot = JSON.stringify(state);
+	const tanksCount = game.tanks.length;
+	let total = 0;
+	let actual = 0;
+	try {
+		for (let i = 0; i < n; i++) {
+			if (upgrade.isDisabled()) break;
+			total += upgrade.cost();
+			upgrade.button.callback();
+			actual++;
+		}
+	} finally {
+		const parsed = JSON.parse(snapshot);
+		for (const key of Object.keys(parsed)) state[key] = parsed[key];
+		while (game.tanks.length > tanksCount) game.tanks.pop();
+	}
+	return { total, actual };
+}
 
 class Game {
 	constructor() {
@@ -18,6 +44,8 @@ class Game {
 		this.currentTab = null;
 		this.debugMode = null; // null | "spawn" | "upgrade"
 		this.debugSelectedShape = null;
+		this.selectedTank = null;
+		this.controlledTank = null;
 	}
 
 	init({ Room, tabs, generalTab }) {
@@ -84,26 +112,34 @@ class Game {
 			const upgrade = this.currentTab.upgrades[i];
 			const x = this.width / 2 + 6 * this.scale;
 			const y = (530 + 100 * i) * this.scale;
-			upgrade.button.render(
-				ctx,
-				x,
-				y,
-				(320 * 3 - 20) * this.scale,
-				80 * this.scale,
-				"",
-				upgrade.isDisabled(),
-			);
+			const w = (320 * 3 - 20) * this.scale;
+			const h = 80 * this.scale;
+
+			const supportsBulk = typeof upgrade.cost === "function";
+			const desired = supportsBulk ? bulkQuantity() : 1;
+			let secondary = upgrade.getSecondary();
+			let canAffordAll = !upgrade.isDisabled();
+			if (supportsBulk && desired > 1 && canAffordAll) {
+				const sim = simulateBuy(this, upgrade, desired);
+				if (sim.actual === desired) {
+					secondary = formatNumber(sim.total) + " score (x" + desired + ")";
+				} else {
+					canAffordAll = false;
+				}
+			}
+			const effectivelyDisabled = !canAffordAll;
+			const hovered = !effectivelyDisabled && mouse.x > x && mouse.y > y && mouse.x < x + w && mouse.y < y + h;
+			const willFire = hovered && mouse.leftRelease;
+
+			upgrade.button.render(ctx, x, y, w, h, "", effectivelyDisabled);
+			if (willFire && desired > 1) {
+				for (let k = 1; k < desired; k++) {
+					if (upgrade.isDisabled()) break;
+					upgrade.button.callback();
+				}
+			}
 			drawText(ctx, upgrade.getLabel(), x + 8 * this.scale, y + 8 * this.scale, false, true, false, 32 * this.scale);
-			drawText(
-				ctx,
-				upgrade.getSecondary(),
-				x + 8 * this.scale,
-				y + 52 * this.scale,
-				false,
-				true,
-				false,
-				24 * this.scale,
-			);
+			drawText(ctx, secondary, x + 8 * this.scale, y + 52 * this.scale, false, true, false, 24 * this.scale);
 		}
 
 		drawText(ctx, "You have " + formatNumber(state.score) + " score", this.width / 2, 120 * this.scale, false, true, true, 48 * this.scale);

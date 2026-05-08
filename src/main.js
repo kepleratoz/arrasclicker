@@ -8,8 +8,83 @@ import { drawText } from "./render.js";
 import { tabs, generalTab } from "./tabs.js";
 import { encode, decode, saveToStorage, loadFromStorage, enableAutoSave } from "./save.js";
 import { renderDebugPanel, updateDebug, shapeUnderMouse } from "./debug.js";
-import { syncTanks, tankUnderMouse } from "./tank.js";
+import { syncTanks, tankUnderMouse, renderTankPreview } from "./tank.js";
+import { TANK_DEFS } from "./tankDefs.js";
 import { formatNumber } from "./utils.js";
+
+function getTankUpgradeButtons() {
+	const tank = game.selectedTank;
+	if (!tank) return [];
+	const def = TANK_DEFS[tank.defKey];
+	if (!def.upgrades || !tank.canUpgrade()) return [];
+	const s = game.scale;
+	const w = 200 * s;
+	const h = 70 * s;
+	const margin = 6 * s;
+	const x = game.width - w - margin;
+	const buttons = [];
+	for (let i = 0; i < def.upgrades.length; ++i) {
+		buttons.push({ defKey: def.upgrades[i], x, y: margin + i * (h + 4 * s), w, h });
+	}
+	return buttons;
+}
+
+function handleTankClicks() {
+	if (keys.justPressed.has("Escape") && game.controlledTank) {
+		game.controlledTank = null;
+	}
+	const shiftHeld = keys.pressed.has("ShiftLeft") || keys.pressed.has("ShiftRight");
+	if (mouse.leftClick) {
+		const t = tankUnderMouse();
+		if (t && shiftHeld) {
+			game.controlledTank = game.controlledTank === t ? null : t;
+			game.selectedTank = null;
+			mouse.leftClick = false;
+			return;
+		}
+		if (t) mouse.leftClick = false;
+	}
+	if (game.controlledTank) return;
+	if (!mouse.leftRelease) return;
+	if (game.selectedTank) {
+		const buttons = getTankUpgradeButtons();
+		for (const b of buttons) {
+			if (mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h) {
+				game.selectedTank.upgradeTo(b.defKey);
+				mouse.leftRelease = false;
+				return;
+			}
+		}
+	}
+	const t = tankUnderMouse();
+	if (t) {
+		game.selectedTank = t;
+		mouse.leftRelease = false;
+	} else if (game.selectedTank) {
+		game.selectedTank = null;
+	}
+}
+
+function renderTankUpgradePanel() {
+	const buttons = getTankUpgradeButtons();
+	if (buttons.length === 0) return;
+	const ctx = game.ctx;
+	const s = game.scale;
+	for (const b of buttons) {
+		const hovered = mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+		ctx.lineWidth = 8 * s;
+		ctx.strokeStyle = "#222";
+		ctx.strokeRect(b.x, b.y, b.w, b.h);
+		ctx.fillStyle = hovered ? "#3a8ed6" : "#2a2a2a";
+		ctx.fillRect(b.x, b.y, b.w, b.h);
+		const previewSize = (b.h - 16 * s) / 2;
+		const previewX = b.x + previewSize + 12 * s;
+		const previewY = b.y + b.h / 2;
+		const fakeTank = { defKey: b.defKey, gunStates: TANK_DEFS[b.defKey].guns.map(() => null) };
+		renderTankPreview(ctx, fakeTank, previewX, previewY, previewSize);
+		drawText(ctx, TANK_DEFS[b.defKey].label, b.x + previewSize * 2 + 24 * s, b.y + b.h / 2, false, true, false, 22 * s);
+	}
+}
 
 game.init({ Room, tabs, generalTab });
 
@@ -39,13 +114,15 @@ function frame(now) {
 		nextSpawnTime += (0.5 + Math.random() * 0.5) * state.shapesSpawnInterval;
 	}
 	updateDebug();
+	handleTankClicks();
 	game.update();
 	game.render(drawText);
 	try {
 		saveButton.render(game.ctx, 6 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Save", false);
 		loadButton.render(game.ctx, 106 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Load", false);
 		renderDebugPanel(game.ctx);
-		const hoveredTank = tankUnderMouse();
+		renderTankUpgradePanel();
+		const hoveredTank = game.selectedTank;
 		const hovered = hoveredTank ? null : shapeUnderMouse();
 		if (hoveredTank) {
 			const s = game.scale;

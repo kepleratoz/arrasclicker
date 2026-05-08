@@ -158,7 +158,7 @@ class UnlockLegendary {
 	isDisabled() { return state.rarityCap > 0 || !this.requirement() || state.score < this.cost(); }
 }
 class UnlockPentagons {
-	button = new Button(() => { state.pentagonsUnlocked = true; }, colors.pentagon);
+	button = new Button(() => { state.shapeTypeBuff *= 10; state.pentagonsUnlocked = true; }, colors.pentagon);
 	getLabel() { return "Unlock Pentagon Upgrades"; }
 	requirement() { return shapeTypeFromBuff(state.shapeTypeBuff) > 4; }
 	getSecondary() {
@@ -203,11 +203,13 @@ class PentagonBuff {
 class UnlockHexagons {
 	button = new Button(() => { state.hexagonsUnlocked = true; }, colors.hexagon);
 	getLabel() { return "Unlock Hexagon Upgrades"; }
-	requirement() { return shapeTypeFromBuff(state.shapeTypeBuff) > 5; }
+	requirement() { return state.pentagonsUnlocked; }
 	getSecondary() {
 		return state.hexagonsUnlocked
 			? "UNLOCKED"
-			: "Get enough chance to spawn the first hexagon";
+			: this.requirement()
+			? "Hexagons now spawn at 1/5 the pentagon rate"
+			: "Unlock pentagons first";
 	}
 	isDisabled() { return state.hexagonsUnlocked || !this.requirement(); }
 }
