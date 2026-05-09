@@ -36,9 +36,24 @@ export const TANK_DEFS = {
 	},
 	trapper: {
 		label: "Trapper",
+		// Single seamless polygon: body section to (1.5, ±0.35), then flares to nose tip (1.8, ±0.595).
 		guns: [
-			{ length: 1.5, width: 0.7, x: 0, y: 0, angle: 0 },
-			{ length: 0.3, width: 0.7, aspect: 1.7, x: 1.5, y: 0, angle: 0, shoot: { reload: 2.19, damage: 1.5, speed: 1.5, size: 1.7, range: 2.5, isTrap: true } },
+			{
+				length: 1.8,
+				width: 0.7,
+				x: 0,
+				y: 0,
+				angle: 0,
+				outline: [
+					[0, 0.35],
+					[1.5, 0.35],
+					[1.8, 0.35 * 1.7],
+					[1.8, -0.35 * 1.7],
+					[1.5, -0.35],
+					[0, -0.35],
+				],
+				shoot: { reload: 2.19, damage: 1.5, speed: 1.5, size: 1.7, range: 2.5, isTrap: true },
+			},
 		],
 	},
 };

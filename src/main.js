@@ -9,6 +9,7 @@ import { tabs, generalTab } from "./tabs.js";
 import { encode, decode, saveToStorage, loadFromStorage, enableAutoSave, onBeforeSave } from "./save.js";
 import { renderDebugPanel, updateDebug, shapeUnderMouse } from "./debug.js";
 import { syncTanks, tankUnderMouse, renderTankPreview, snapshotTanks } from "./tank.js";
+import { Siege } from "./siege.js";
 import { TANK_DEFS } from "./tankDefs.js";
 import { formatNumber } from "./utils.js";
 
@@ -146,6 +147,7 @@ game.init({ Room, tabs, generalTab });
 
 loadFromStorage();
 syncTanks();
+game.sieges.push(new Siege());
 onBeforeSave(snapshotTanks);
 enableAutoSave();
 

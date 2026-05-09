@@ -31,8 +31,8 @@ function tankBulletSpeedMul() { return Math.pow(1.2, state.tankBulletSpeedUpgrad
 const COLLISION_COOLDOWN_FRAMES = 3; // 60fps / 20 hits-per-second
 const DEATH_FRAMES = 18; // ~300ms at 60fps to match OSA's getFade decay
 
-class Bullet {
-	constructor(pos, angle, tank, shootCfg, gunWidth, shudderMul = 1) {
+export class Bullet {
+	constructor(pos, angle, tank, shootCfg, gunWidth, shudderMul = 1, sizeOverride = null) {
 		const speedMul = shootCfg.speed ?? 1;
 		const sizeMul = shootCfg.size ?? 1;
 		const damageMul = shootCfg.damage ?? 1;
@@ -43,7 +43,7 @@ class Bullet {
 		this.isTrap = !!shootCfg.isTrap;
 		const upgradeSpeedMul = this.isTrap ? 1 + (tankBulletSpeedMul() - 1) * 0.5 : tankBulletSpeedMul();
 		this.velocity = Vec2.circle(angle, BULLET_SPEED * speedMul * shudderMul * upgradeSpeedMul);
-		this.size = (tank.size * gunWidth * sizeMul) / 2;
+		this.size = sizeOverride ?? (tank.size * gunWidth * sizeMul) / 2;
 		this.tank = tank;
 		this.life = tankBulletLife() * rangeMul;
 		this.damage = tankBaseDamage() * damageMul;
@@ -88,7 +88,7 @@ class Bullet {
 						alpha: 1,
 						text: "+" + formatNumber(shape.score),
 					});
-					if (this.tank) this.tank.gainXp(getJackpot(shapeXpValue(shape)));
+					if (this.tank && typeof this.tank.gainXp === "function") this.tank.gainXp(getJackpot(shapeXpValue(shape)));
 				}
 				this.collisionCooldown = COLLISION_COOLDOWN_FRAMES;
 				if (this.health <= 0) { this.startDying(); return; }
@@ -370,13 +370,19 @@ function renderTank(ctx, tank, posX, posY, angle, size, applyRoomFov) {
 		ctx.fillStyle = BARREL_FILL;
 		ctx.strokeStyle = BARREL_STROKE;
 		ctx.lineWidth = 2.5 * sc;
-		const r = Math.min(h0, h1, barrelLen) * 0.18;
-		drawRoundedQuad(ctx, [
-			[-recoilOffset, h1],
-			[barrelLen - recoilOffset, h0],
-			[barrelLen - recoilOffset, -h0],
-			[-recoilOffset, -h1],
-		], r);
+		if (gun.outline) {
+			const sizeSc = size * sc;
+			const pts = gun.outline.map(([px, py]) => [px * sizeSc - recoilOffset, py * sizeSc]);
+			drawRoundedQuad(ctx, pts, gun.width * 0.5 * sizeSc * 0.18);
+		} else {
+			const r = Math.min(h0, h1, barrelLen) * 0.18;
+			drawRoundedQuad(ctx, [
+				[-recoilOffset, h1],
+				[barrelLen - recoilOffset, h0],
+				[barrelLen - recoilOffset, -h0],
+				[-recoilOffset, -h1],
+			], r);
+		}
 		ctx.fill();
 		ctx.stroke();
 		ctx.restore();
@@ -435,13 +441,18 @@ export function renderTankPreview(ctx, tank, x, y, size, angleOverride) {
 		ctx.strokeStyle = BARREL_STROKE;
 		ctx.lineWidth = stroke;
 		ctx.lineJoin = "round";
-		const r = Math.min(h0, h1, barrelLen) * 0.18;
-		drawRoundedQuad(ctx, [
-			[0, h1],
-			[barrelLen, h0],
-			[barrelLen, -h0],
-			[0, -h1],
-		], r);
+		if (gun.outline) {
+			const pts = gun.outline.map(([px, py]) => [px * size, py * size]);
+			drawRoundedQuad(ctx, pts, gun.width * 0.5 * size * 0.18);
+		} else {
+			const r = Math.min(h0, h1, barrelLen) * 0.18;
+			drawRoundedQuad(ctx, [
+				[0, h1],
+				[barrelLen, h0],
+				[barrelLen, -h0],
+				[0, -h1],
+			], r);
+		}
 		ctx.fill();
 		ctx.stroke();
 		ctx.restore();
