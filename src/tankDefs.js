@@ -20,7 +20,7 @@ export const TANK_DEFS = {
 	},
 	machineGun: {
 		label: "Machine Gun",
-		guns: [{ length: 1.2, width: 1.0, aspect: 1.4, x: 0.8, y: 0, angle: 0, shoot: { reload: 0.5, damage: 0.7, size: 0.92 } }],
+		guns: [{ length: 1.2, width: 1.0, aspect: 1.4, x: 0.8, y: 0, angle: 0, shoot: { reload: 0.5, damage: 0.7, size: 0.92, health: 0.7, spray: 2.5, shudder: 1.7 } }],
 	},
 	flankGuard: {
 		label: "Flank Guard",
@@ -38,7 +38,7 @@ export const TANK_DEFS = {
 		label: "Trapper",
 		guns: [
 			{ length: 1.5, width: 0.7, x: 0, y: 0, angle: 0 },
-			{ length: 0.3, width: 0.7, aspect: 1.7, x: 1.5, y: 0, angle: 0, shoot: { reload: 2.19, damage: 1.5, speed: 0.65, size: 0.7, range: 0.6 } },
+			{ length: 0.3, width: 0.7, aspect: 1.7, x: 1.5, y: 0, angle: 0, shoot: { reload: 2.19, damage: 1.5, speed: 1.5, size: 1.7, range: 2.5, isTrap: true } },
 		],
 	},
 };

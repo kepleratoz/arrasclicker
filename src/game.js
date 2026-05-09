@@ -46,6 +46,9 @@ class Game {
 		this.debugSelectedShape = null;
 		this.selectedTank = null;
 		this.controlledTank = null;
+		this.upgradeScroll = 0;
+		this.upgradeScrollTarget = 0;
+		this.scrolledTab = null;
 	}
 
 	init({ Room, tabs, generalTab }) {
@@ -108,12 +111,36 @@ class Game {
 			}
 		}
 
+		if (this.currentTab !== this.scrolledTab) {
+			this.upgradeScroll = 0;
+			this.upgradeScrollTarget = 0;
+			this.scrolledTab = this.currentTab;
+		}
+		const regionX = this.width / 2 + 6 * this.scale;
+		const regionW = (320 * 3 - 20) * this.scale;
+		const regionTop = 530 * this.scale;
+		const regionBottom = this.height - 8 * this.scale;
+		const upgradeSpacing = 100 * this.scale;
+		const totalContentH = this.currentTab.upgrades.length * upgradeSpacing;
+		const maxScroll = Math.max(0, totalContentH - (regionBottom - regionTop));
+		if (mouse.wheelDelta && mouse.x >= regionX && mouse.x <= regionX + regionW && mouse.y >= regionTop) {
+			this.upgradeScrollTarget = Math.max(0, Math.min(maxScroll, this.upgradeScrollTarget + mouse.wheelDelta));
+		}
+		this.upgradeScrollTarget = Math.max(0, Math.min(maxScroll, this.upgradeScrollTarget));
+		this.upgradeScroll += (this.upgradeScrollTarget - this.upgradeScroll) * 0.18;
+		if (Math.abs(this.upgradeScrollTarget - this.upgradeScroll) < 0.4) this.upgradeScroll = this.upgradeScrollTarget;
+		ctx.save();
+		ctx.beginPath();
+		const clipPad = 12 * this.scale;
+		ctx.rect(regionX - clipPad, regionTop - clipPad, regionW + clipPad * 2, regionBottom - regionTop + clipPad * 2);
+		ctx.clip();
 		for (let i = 0; i < this.currentTab.upgrades.length; ++i) {
 			const upgrade = this.currentTab.upgrades[i];
-			const x = this.width / 2 + 6 * this.scale;
-			const y = (530 + 100 * i) * this.scale;
-			const w = (320 * 3 - 20) * this.scale;
+			const x = regionX;
+			const y = regionTop + i * upgradeSpacing - this.upgradeScroll;
+			const w = regionW;
 			const h = 80 * this.scale;
+			if (y + h < regionTop || y > regionBottom) continue;
 
 			const supportsBulk = typeof upgrade.cost === "function";
 			const desired = supportsBulk ? bulkQuantity() : 1;
@@ -141,6 +168,7 @@ class Game {
 			drawText(ctx, upgrade.getLabel(), x + 8 * this.scale, y + 8 * this.scale, false, true, false, 32 * this.scale);
 			drawText(ctx, secondary, x + 8 * this.scale, y + 52 * this.scale, false, true, false, 24 * this.scale);
 		}
+		ctx.restore();
 
 		drawText(ctx, "You have " + formatNumber(state.score) + " score", this.width / 2, 120 * this.scale, false, true, true, 48 * this.scale);
 		drawText(

@@ -4,8 +4,8 @@ import { colors, formatNumber } from "./utils.js";
 import { shapeTypeFromBuff, shapeRarityFromBuff } from "./shape.js";
 import { syncTanks } from "./tank.js";
 
-const RARITY_TIER_NAMES = ["Normal", "Shiny", "Legendary", "Shadow", "Ultra"];
-const RARITY_TIER_COLORS = ["#bbbbbb", colors.shiny, colors.legendary, colors.shadow, colors.ultra];
+const RARITY_TIER_NAMES = ["Normal", "Shiny", "Legendary", "Shadow", "Rainbow"];
+const RARITY_TIER_COLORS = ["#bbbbbb", colors.shiny, colors.legendary, colors.shadow, "#ff5cd4"];
 
 // ---------- Egg ----------
 class EggEvolution {
@@ -30,6 +30,16 @@ class UnlockSquares {
 	isDisabled() { return state.squaresUnlocked || state.score < this.cost(); }
 }
 export const eggUpgrades = [new EggEvolution(), new EggEvoTime(), new UnlockSquares()];
+
+// ---------- Click ----------
+class ClickDamage {
+	button = new Button(() => { state.score -= this.cost(); state.clickDamageUpgrades += 1; }, "#3085db");
+	getLabel() { return "+1 Click Damage (now " + (1 + state.clickDamageUpgrades) + " per click)"; }
+	cost() { return 100 * Math.pow(1e4, state.clickDamageUpgrades); }
+	getSecondary() { return formatNumber(this.cost()) + " score"; }
+	isDisabled() { return state.score < this.cost(); }
+}
+export const clickUpgrades = [new ClickDamage()];
 
 // ---------- General ----------
 class ShapesCap {
@@ -67,10 +77,10 @@ class ArenaFov {
 }
 class AddTank {
 	button = new Button(() => { state.score -= this.cost(); state.tankCount += 1; syncTanks(); }, "#58b0d0");
-	getLabel() { return "Add Tank (" + state.tankCount + "/2)"; }
+	getLabel() { return "Add Tank (" + state.tankCount + "/3)"; }
 	requirement() { return state.arenaFovUpgrades >= 1; }
-	max() { return state.tankCount >= 2; }
-	cost() { return state.tankCount === 0 ? 1e12 : 1e14; }
+	max() { return state.tankCount >= 3; }
+	cost() { return state.tankCount === 0 ? 1e12 : state.tankCount === 1 ? 1e14 : 1e15; }
 	getSecondary() {
 		if (this.max()) return "MAX";
 		if (!this.requirement()) return "Requires Arena Tier 1";
@@ -272,6 +282,14 @@ class TankSpeed {
 	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
 	isDisabled() { return this.max() || state.score < this.cost(); }
 }
+class TankBulletSpeed {
+	button = new Button(() => { state.score -= this.cost(); state.tankBulletSpeedUpgrades += 1; }, TANK_COLOR);
+	getLabel() { return "+20% Bullet Speed (" + state.tankBulletSpeedUpgrades + "/5)"; }
+	max() { return state.tankBulletSpeedUpgrades >= 5; }
+	cost() { return 1e12 * Math.pow(2, state.tankBulletSpeedUpgrades); }
+	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
+	isDisabled() { return this.max() || state.score < this.cost(); }
+}
 class TankRarityCap {
 	button = new SliderButton(
 		RARITY_TIER_NAMES,
@@ -288,7 +306,7 @@ class TankRarityCap {
 	getSecondary() { return ""; }
 	isDisabled() { return false; }
 }
-export const tankUpgrades = [new TankReload(), new TankDamage(), new TankHealth(), new TankSpeed(), new TankRarityCap()];
+export const tankUpgrades = [new TankReload(), new TankDamage(), new TankHealth(), new TankBulletSpeed(), new TankSpeed(), new TankRarityCap()];
 
 class UnlockShadow {
 	button = new Button(() => { state.score -= this.cost(); state.rarityCap = Math.max(state.rarityCap, 2); }, colors.shadow, "rgba(34,34,34,0.4)");

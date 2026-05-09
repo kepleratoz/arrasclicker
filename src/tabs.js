@@ -4,7 +4,7 @@ import { darken } from "./utils.js";
 import { drawPolygon } from "./render.js";
 import { makeShapeData } from "./shape.js";
 import { game } from "./game.js";
-import { generalUpgrades, eggUpgrades, squareUpgrades, triangleUpgrades, pentagonUpgrades, hexagonUpgrades, tankUpgrades } from "./upgrades.js";
+import { generalUpgrades, eggUpgrades, squareUpgrades, triangleUpgrades, pentagonUpgrades, hexagonUpgrades, tankUpgrades, clickUpgrades } from "./upgrades.js";
 
 export class Tab {
 	constructor(name, upgrades, color, logo, isUnlocked) {
@@ -42,6 +42,7 @@ export class Tab {
 }
 
 export const generalTab = new Tab("General", generalUpgrades, "#3ca4cb");
+export const clickTab = new Tab("Click", clickUpgrades, "#3085db");
 export const eggTab = new Tab("Egg", eggUpgrades, "#e8ebf7", makeShapeData(0, -1, 1));
 export const squareTab = new Tab("Square", squareUpgrades, "#efc74b", makeShapeData(1, -1, 1), () => state.squaresUnlocked);
 export const triangleTab = new Tab("Triangle", triangleUpgrades, "#e7896d", makeShapeData(2, -1, 1), () => state.trianglesUnlocked);
@@ -51,6 +52,7 @@ export const tankTab = new Tab("Tank Upgrades", tankUpgrades, "#58b0d0", null, (
 
 export const tabs = [
 	generalTab,
+	clickTab,
 	eggTab,
 	squareTab,
 	triangleTab,

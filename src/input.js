@@ -22,9 +22,12 @@ class Mouse {
 			case 2: this.right = false; break;
 		}
 	}
+	wheelDelta = 0;
+	wheel(e) { this.wheelDelta += e.deltaY; }
 	resetClicks() {
 		this.leftClick = false;
 		this.leftRelease = false;
+		this.wheelDelta = 0;
 	}
 }
 
@@ -46,6 +49,7 @@ export const keys = new Keys();
 window.addEventListener("mousemove", (e) => mouse.move(e));
 window.addEventListener("mousedown", (e) => mouse.down(e));
 window.addEventListener("mouseup", (e) => mouse.up(e));
+window.addEventListener("wheel", (e) => mouse.wheel(e), { passive: true });
 window.addEventListener("contextmenu", (e) => e.preventDefault());
 window.addEventListener("keydown", (e) => keys.down(e));
 window.addEventListener("keyup", (e) => keys.up(e));

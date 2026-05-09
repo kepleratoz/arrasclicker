@@ -6,9 +6,9 @@ import { Button } from "./button.js";
 import { Shape, TYPE_NAMES } from "./shape.js";
 import { drawText } from "./render.js";
 import { tabs, generalTab } from "./tabs.js";
-import { encode, decode, saveToStorage, loadFromStorage, enableAutoSave } from "./save.js";
+import { encode, decode, saveToStorage, loadFromStorage, enableAutoSave, onBeforeSave } from "./save.js";
 import { renderDebugPanel, updateDebug, shapeUnderMouse } from "./debug.js";
-import { syncTanks, tankUnderMouse, renderTankPreview } from "./tank.js";
+import { syncTanks, tankUnderMouse, renderTankPreview, snapshotTanks } from "./tank.js";
 import { TANK_DEFS } from "./tankDefs.js";
 import { formatNumber } from "./utils.js";
 
@@ -146,6 +146,7 @@ game.init({ Room, tabs, generalTab });
 
 loadFromStorage();
 syncTanks();
+onBeforeSave(snapshotTanks);
 enableAutoSave();
 
 game.resize();
@@ -204,8 +205,11 @@ function frame(now) {
 			const s = game.scale;
 			const lineH = 28 * s;
 			const x = 12 * s;
+			const rarityNames = ["Shiny", "Legendary", "Shadow", "Rainbow", "Ethereal"];
+			const rarityLabel = hovered.rarity >= 0 ? rarityNames[hovered.rarity] + " " : "";
 			const yBase = game.height - 12 * s - lineH * 3;
-			drawText(game.ctx, TYPE_NAMES[hovered.type], x, yBase, false, true, false, 28 * s);
+			const hpDisplay = " - " + Math.max(0, Math.floor(hovered.health)) + "/" + hovered.maxHealth;
+			drawText(game.ctx, rarityLabel + TYPE_NAMES[hovered.type] + hpDisplay, x, yBase, false, true, false, 28 * s);
 			drawText(game.ctx, "Tier " + hovered.layers, x, yBase + lineH, false, true, false, 24 * s);
 			drawText(game.ctx, formatNumber(hovered.score) + " score", x, yBase + lineH * 2, false, true, false, 24 * s);
 		}

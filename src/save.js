@@ -34,9 +34,12 @@ export const SAVE_KEY = "arrasclicker_save";
 let saveSuspended = false;
 let autoSaveInterval = null;
 const beforeUnloadHandler = () => saveToStorage();
+const beforeSaveHooks = [];
+export function onBeforeSave(fn) { beforeSaveHooks.push(fn); }
 
 export function saveToStorage() {
 	if (saveSuspended) return;
+	for (const h of beforeSaveHooks) try { h(); } catch (e) { console.error("beforeSave hook failed:", e); }
 	try { localStorage.setItem(SAVE_KEY, encode()); }
 	catch (e) { console.error("Save failed:", e); }
 }

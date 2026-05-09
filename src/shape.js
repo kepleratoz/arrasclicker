@@ -93,7 +93,14 @@ export class Shape {
 		this.score = data.score;
 		this.type = data.type;
 		this.rarity = data.rarity ?? -1;
-		this.health = (data.type + 1) * (this.rarity === ETHEREAL ? 3 : 1);
+		const rarityHealth = this.rarity === ETHEREAL ? 3
+			: this.rarity === 3 ? 8
+			: this.rarity === 2 ? 6
+			: this.rarity === 1 ? 4
+			: this.rarity === 0 ? 2
+			: 1;
+		this.maxHealth = (data.type + 1) * rarityHealth;
+		this.health = this.maxHealth;
 		const sides = Math.max(3, this.sides);
 		const cosFactor = Math.cos(Math.PI / sides);
 		const triangleAdjust = this.sides === 3 && this.layers > 1 ? 2 / (2 + (this.layers - 1)) : 1;
@@ -136,7 +143,7 @@ export class Shape {
 			const overlap = (mouse.leftClick ? 10 : 100) + this.size * screenScale - Math.sqrt(dx * dx + dy * dy);
 			if (overlap > 0) {
 				if (mouse.leftClick) {
-					this.health -= 1;
+					this.health -= 1 + (state.clickDamageUpgrades || 0);
 					if (this.rarity === ETHEREAL && this.health > 0 && Math.random() < 0.5) {
 						this.pos.x = game.room.minX + Math.random() * game.room.maxX;
 						this.pos.y = game.room.minY + Math.random() * game.room.maxY;
@@ -171,7 +178,7 @@ export class Shape {
 		const cosFactor = Math.cos(Math.PI / sides);
 		const fade = this.dying ? Math.max(0, 1 - this.dying / DEATH_FRAMES) : 1;
 		const sizeMul = 1 + 0.5 * (1 - fade);
-		const colorScale = this.dying ? 1 : (this.health + 1) / (this.type + 2);
+		const colorScale = this.dying ? 1 : Math.max(0.35, this.health / this.maxHealth);
 		let visibilityAlpha = 1;
 		if (this.rarity === ETHEREAL && !this.dying) {
 			const sc = game.scale * game.room.fov;
@@ -182,8 +189,16 @@ export class Shape {
 		}
 		ctx.globalAlpha = fade * visibilityAlpha;
 		if (ctx.globalAlpha <= 0) { ctx.globalAlpha = 1; return; }
-		ctx.fillStyle = darken(this.fillStyle, colorScale);
-		ctx.strokeStyle = darken(this.strokeStyle, colorScale);
+		if (this.rarity === 3) {
+			const hue = (Date.now() * 0.2) % 360;
+			const fillL = Math.round(60 * colorScale);
+			const strokeL = Math.round(35 * colorScale);
+			ctx.fillStyle = `hsl(${hue}, 80%, ${fillL}%)`;
+			ctx.strokeStyle = `hsl(${hue}, 60%, ${strokeL}%)`;
+		} else {
+			ctx.fillStyle = darken(this.fillStyle, colorScale);
+			ctx.strokeStyle = darken(this.strokeStyle, colorScale);
+		}
 		ctx.lineWidth = 3 * game.scale * game.room.fov;
 		for (let i = 0; i < this.layers; ++i) {
 			drawPolygon(

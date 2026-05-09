@@ -27,18 +27,22 @@ function tankBaseDamage() { return 1 + 0.5 * state.tankDamageUpgrades; }
 function tankBulletLife() { return BASE_BULLET_LIFE; }
 function tankBulletHealth() { return 5 * Math.pow(1.2, state.tankHealthUpgrades); }
 function tankSpeed() { return BASE_TANK_SPEED * Math.pow(1.33, state.tankSpeedUpgrades); }
+function tankBulletSpeedMul() { return Math.pow(1.2, state.tankBulletSpeedUpgrades); }
 const COLLISION_COOLDOWN_FRAMES = 3; // 60fps / 20 hits-per-second
 const DEATH_FRAMES = 18; // ~300ms at 60fps to match OSA's getFade decay
 
 class Bullet {
-	constructor(pos, angle, tank, shootCfg, gunWidth) {
+	constructor(pos, angle, tank, shootCfg, gunWidth, shudderMul = 1) {
 		const speedMul = shootCfg.speed ?? 1;
 		const sizeMul = shootCfg.size ?? 1;
 		const damageMul = shootCfg.damage ?? 1;
 		const rangeMul = shootCfg.range ?? 1;
 		const healthMul = shootCfg.health ?? 1;
 		this.pos = pos;
-		this.velocity = Vec2.circle(angle, BULLET_SPEED * speedMul);
+		this.angle = angle;
+		this.isTrap = !!shootCfg.isTrap;
+		const upgradeSpeedMul = this.isTrap ? 1 + (tankBulletSpeedMul() - 1) * 0.5 : tankBulletSpeedMul();
+		this.velocity = Vec2.circle(angle, BULLET_SPEED * speedMul * shudderMul * upgradeSpeedMul);
 		this.size = (tank.size * gunWidth * sizeMul) / 2;
 		this.tank = tank;
 		this.life = tankBulletLife() * rangeMul;
@@ -55,6 +59,10 @@ class Bullet {
 	}
 	update() {
 		this.pos.add(this.velocity);
+		if (this.isTrap) {
+			this.velocity.mulVal(0.97);
+			this.angle += this.velocity.length() * 0.04;
+		}
 		if (this.dying) {
 			this.dying += 1;
 			if (this.dying > DEATH_FRAMES) this.dead = true;
@@ -96,11 +104,53 @@ class Bullet {
 		ctx.fillStyle = BODY_FILL;
 		ctx.strokeStyle = BODY_STROKE;
 		ctx.lineWidth = 2.5 * sc;
-		drawPolygon(ctx, this.pos.x, this.pos.y, this.size * sizeMul, 0, 0);
+		if (this.isTrap) {
+			drawTrap(ctx, this.pos.x * sc, this.pos.y * sc, this.size * sizeMul * sc, this.angle);
+		} else {
+			drawPolygon(ctx, this.pos.x, this.pos.y, this.size * sizeMul, 0, 0);
+		}
 		ctx.fill();
 		ctx.stroke();
 		ctx.globalAlpha = 1;
 	}
+}
+
+function drawRoundedQuad(ctx, points, r) {
+	const n = points.length;
+	ctx.beginPath();
+	for (let i = 0; i < n; i++) {
+		const [cx, cy] = points[i];
+		const [px, py] = points[(i - 1 + n) % n];
+		const [nx, ny] = points[(i + 1) % n];
+		const v1x = px - cx, v1y = py - cy;
+		const v2x = nx - cx, v2y = ny - cy;
+		const l1 = Math.sqrt(v1x * v1x + v1y * v1y) || 1;
+		const l2 = Math.sqrt(v2x * v2x + v2y * v2y) || 1;
+		const radius = Math.min(r, l1 / 2, l2 / 2);
+		const ax = cx + (v1x / l1) * radius;
+		const ay = cy + (v1y / l1) * radius;
+		const bx = cx + (v2x / l2) * radius;
+		const by = cy + (v2y / l2) * radius;
+		if (i === 0) ctx.moveTo(ax, ay);
+		else ctx.lineTo(ax, ay);
+		ctx.arcTo(cx, cy, bx, by, radius);
+	}
+	ctx.closePath();
+}
+
+function drawTrap(ctx, x, y, radius, angle) {
+	const sides = 3;
+	const dip = 1 - 6 / (sides * sides); // OSA star formula → 0.333 for 3 points
+	const inner = radius * dip;
+	ctx.beginPath();
+	ctx.moveTo(x + radius * Math.cos(angle), y + radius * Math.sin(angle));
+	for (let i = 0; i < sides; ++i) {
+		const htheta = ((i + 0.5) / sides) * 2 * Math.PI + angle;
+		const theta = ((i + 1) / sides) * 2 * Math.PI + angle;
+		ctx.lineTo(x + inner * Math.cos(htheta), y + inner * Math.sin(htheta));
+		ctx.lineTo(x + radius * Math.cos(theta), y + radius * Math.sin(theta));
+	}
+	ctx.closePath();
 }
 
 const MAX_TURN_PER_FRAME = 0.12;
@@ -274,7 +324,11 @@ export class Tank {
 					const barrelDir = this.angle + (gun.angle ?? 0);
 					const tipX = mountX + Math.cos(barrelDir) * gun.length * this.size;
 					const tipY = mountY + Math.sin(barrelDir) * gun.length * this.size;
-					this.bullets.push(new Bullet(new Vec2(tipX, tipY), barrelDir, this, gun.shoot, gun.width));
+					const sprayRad = (gun.shoot.spray ?? 0) * 0.12;
+					const shudderAmt = (gun.shoot.shudder ?? 0) * 0.12;
+					const fireAngle = barrelDir + (Math.random() - 0.5) * sprayRad;
+					const shudderMul = 1 + (Math.random() - 0.5) * shudderAmt;
+					this.bullets.push(new Bullet(new Vec2(tipX, tipY), fireAngle, this, gun.shoot, gun.width, shudderMul));
 					gs.shootTime = now + interval;
 					gs.gunMotion += RECOIL_IMPULSE;
 				}
@@ -316,12 +370,13 @@ function renderTank(ctx, tank, posX, posY, angle, size, applyRoomFov) {
 		ctx.fillStyle = BARREL_FILL;
 		ctx.strokeStyle = BARREL_STROKE;
 		ctx.lineWidth = 2.5 * sc;
-		ctx.beginPath();
-		ctx.moveTo(-recoilOffset, h1);
-		ctx.lineTo(barrelLen - recoilOffset, h0);
-		ctx.lineTo(barrelLen - recoilOffset, -h0);
-		ctx.lineTo(-recoilOffset, -h1);
-		ctx.closePath();
+		const r = Math.min(h0, h1, barrelLen) * 0.18;
+		drawRoundedQuad(ctx, [
+			[-recoilOffset, h1],
+			[barrelLen - recoilOffset, h0],
+			[barrelLen - recoilOffset, -h0],
+			[-recoilOffset, -h1],
+		], r);
 		ctx.fill();
 		ctx.stroke();
 		ctx.restore();
@@ -379,12 +434,14 @@ export function renderTankPreview(ctx, tank, x, y, size, angleOverride) {
 		ctx.fillStyle = BARREL_FILL;
 		ctx.strokeStyle = BARREL_STROKE;
 		ctx.lineWidth = stroke;
-		ctx.beginPath();
-		ctx.moveTo(0, h1);
-		ctx.lineTo(barrelLen, h0);
-		ctx.lineTo(barrelLen, -h0);
-		ctx.lineTo(0, -h1);
-		ctx.closePath();
+		ctx.lineJoin = "round";
+		const r = Math.min(h0, h1, barrelLen) * 0.18;
+		drawRoundedQuad(ctx, [
+			[0, h1],
+			[barrelLen, h0],
+			[barrelLen, -h0],
+			[0, -h1],
+		], r);
 		ctx.fill();
 		ctx.stroke();
 		ctx.restore();
@@ -413,7 +470,29 @@ export function syncTanks() {
 	while (game.tanks.length < state.tankCount) {
 		const cx = (game.room.minX + game.room.maxX) / 2;
 		const cy = (game.room.minY + game.room.maxY) / 2;
-		game.tanks.push(new Tank(new Vec2(cx, cy)));
+		const t = new Tank(new Vec2(cx, cy));
+		const saved = state.tanks && state.tanks[game.tanks.length];
+		if (saved) {
+			if (saved.defKey && TANK_DEFS[saved.defKey]) t.setClass(saved.defKey);
+			t.level = saved.level ?? 1;
+			t.xp = saved.xp ?? 0;
+			t.deduction = saved.deduction ?? 0;
+			t.levelUpScore = saved.levelUpScore ?? scoreForLevel(t.level);
+			if (saved.pos) { t.pos.x = saved.pos.x; t.pos.y = saved.pos.y; }
+			t.recomputeSize();
+		}
+		game.tanks.push(t);
 	}
 	while (game.tanks.length > state.tankCount) game.tanks.pop();
+}
+
+export function snapshotTanks() {
+	state.tanks = game.tanks.map((t) => ({
+		defKey: t.defKey,
+		level: t.level,
+		xp: t.xp,
+		deduction: t.deduction,
+		levelUpScore: t.levelUpScore,
+		pos: { x: t.pos.x, y: t.pos.y },
+	}));
 }
