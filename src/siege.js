@@ -47,23 +47,28 @@ const TURRET_SHOOT_CFG = {
 	ignoreUpgradeHealth: true,
 };
 
-// Tri auto turret: huge non-targeting turret with three trap-style barrels at 120° apart.
-// Body section width matches the trapezoid's wider (tip) end.
-const TRI_SIZE = MAX_TANK_SIZE * 1.4;        // 40% bigger than a fully-grown tank.
-const TRI_TRAP_BODY_LEN = 1.5;
-const TRI_TRAP_NOSE_LEN = 0.3;
-const TRI_TRAP_NOSE_ASPECT = TRAP_NOSE_ASPECT;
-const TRI_TRAP_BODY_W = 0.8;                 // matches a Basic barrel's width.
-const TRI_TRAP_NOSE_W = TRI_TRAP_BODY_W / TRI_TRAP_NOSE_ASPECT;  // base narrows so tip matches body.
-const TRI_TRAP_TOTAL_LEN = TRI_TRAP_BODY_LEN + TRI_TRAP_NOSE_LEN;
-const TRI_SPIN_RATE = 0.005;                 // slow spin.
-const TRI_SHOOT_INTERVAL = 1000;             // ms; all three barrels fire together.
-const TRI_BULLET_RADIUS = (TRI_SIZE * TRI_TRAP_NOSE_W * TRI_TRAP_NOSE_ASPECT) / 2;
-const TRI_TRAP_SHOOT_CFG = {
+// Auto Healer Turret: huge non-targeting turret with three trap-style barrels at 120° apart.
+// Carries the healer hat at its center and shoots green heal-traps that restore HP to injured
+// tanks on contact. Body section width matches the trapezoid's wider (tip) end.
+const HEALER_SIZE = MAX_TANK_SIZE * 1.4;     // 40% bigger than a fully-grown tank.
+const HEALER_BODY_LEN = 1.5;
+const HEALER_NOSE_LEN = 0.3;
+const HEALER_NOSE_ASPECT = TRAP_NOSE_ASPECT;
+const HEALER_BODY_W = 0.8;                   // matches a Basic barrel's width.
+const HEALER_NOSE_W = HEALER_BODY_W / HEALER_NOSE_ASPECT;
+const HEALER_TOTAL_LEN = HEALER_BODY_LEN + HEALER_NOSE_LEN;
+const HEALER_SPIN_RATE = 0.005;
+const HEALER_SHOOT_INTERVAL = 1000;          // ms; all three barrels fire together.
+const HEALER_BULLET_RADIUS = (HEALER_SIZE * HEALER_NOSE_W * HEALER_NOSE_ASPECT) / 2;
+const HEALER_BULLET_CFG = {
 	...TURRET_SHOOT_CFG,
-	isTrap: true,
+	isHeal: true,
+	healAmount: 4,            // HP restored per impact on an injured tank.
+	damage: 0,                // no damage to anything.
 	size: 1.7,
-	range: 2.5,
+	// Traps quickly slow to a near-stop and only reach ~130 world units total. A non-trap
+	// bullet at constant speed needs a much shorter life to cover roughly the same distance.
+	range: 0.4,
 };
 
 const BASE_FILL = "#3f3f3f";
@@ -102,25 +107,25 @@ export class Siege {
 		this.bullets = [];
 		this.shootTime = 0;
 		this.gunStates = Array.from({ length: BARREL_COUNT }, () => ({ position: 0, motion: 0 }));
-		this.triTurret = {
+		this.healerTurret = {
 			angle: 0,
 			shootTime: 0,
 			gunStates: Array.from({ length: 3 }, () => ({ position: 0, motion: 0 })),
 		};
 	}
-	updateTriTurret(now) {
-		this.triTurret.angle += TRI_SPIN_RATE;
-		if (now > this.triTurret.shootTime) {
+	updateHealerTurret(now) {
+		this.healerTurret.angle += HEALER_SPIN_RATE;
+		if (now > this.healerTurret.shootTime) {
 			for (let i = 0; i < 3; i++) {
-				const a = this.triTurret.angle + (i / 3) * Math.PI * 2;
-				const tipX = this.pos.x + Math.cos(a) * TRI_TRAP_TOTAL_LEN * TRI_SIZE;
-				const tipY = this.pos.y + Math.sin(a) * TRI_TRAP_TOTAL_LEN * TRI_SIZE;
-				this.bullets.push(new Bullet(new Vec2(tipX, tipY), a, this, TRI_TRAP_SHOOT_CFG, TRI_TRAP_NOSE_W, 1, TRI_BULLET_RADIUS));
-				this.triTurret.gunStates[i].motion += RECOIL_IMPULSE;
+				const a = this.healerTurret.angle + (i / 3) * Math.PI * 2;
+				const tipX = this.pos.x + Math.cos(a) * HEALER_TOTAL_LEN * HEALER_SIZE;
+				const tipY = this.pos.y + Math.sin(a) * HEALER_TOTAL_LEN * HEALER_SIZE;
+				this.bullets.push(new Bullet(new Vec2(tipX, tipY), a, this, HEALER_BULLET_CFG, HEALER_NOSE_W, 1, HEALER_BULLET_RADIUS));
+				this.healerTurret.gunStates[i].motion += RECOIL_IMPULSE;
 			}
-			this.triTurret.shootTime = now + TRI_SHOOT_INTERVAL;
+			this.healerTurret.shootTime = now + HEALER_SHOOT_INTERVAL;
 		}
-		for (const gs of this.triTurret.gunStates) {
+		for (const gs of this.healerTurret.gunStates) {
 			gs.motion -= RECOIL_SPRING * gs.position;
 			gs.position += gs.motion;
 			if (gs.position < 0) { gs.position = 0; gs.motion = -gs.motion; }
@@ -136,7 +141,7 @@ export class Siege {
 			this.shoot();
 			this.shootTime = now + SHOOT_INTERVAL;
 		}
-		this.updateTriTurret(now);
+		this.updateHealerTurret(now);
 		if (this.health < this.maxHealth) this.health = Math.min(this.maxHealth, this.health + REGEN_PER_FRAME);
 		// Per-barrel recoil spring
 		for (const gs of this.gunStates) {
@@ -245,18 +250,21 @@ export class Siege {
 		ctx.fill();
 		ctx.stroke();
 
-		// 4.5. Tri auto turret — huge barrel-colored body with three trap-style barrels.
-		const triR = TRI_SIZE * sc;
-		const triUnit = TRI_SIZE * sc;
-		const triBodyLen = TRI_TRAP_BODY_LEN * triUnit;
-		const triBodyHalfW = (TRI_TRAP_BODY_W / 2) * triUnit;
-		const triNoseStart = triBodyLen;
-		const triNoseEnd = triNoseStart + TRI_TRAP_NOSE_LEN * triUnit;
-		const triNoseBaseHalfW = (TRI_TRAP_NOSE_W / 2) * triUnit;
-		const triNoseTipHalfW = triNoseBaseHalfW * TRI_TRAP_NOSE_ASPECT;
+		// 4.5. Auto Healer Turret — huge barrel-colored body with three trap-style barrels
+		// and the healer hat mounted on top. The hat is rendered without spinning so the
+		// red plus stays upright while the barrels rotate beneath it.
+		const healerTurretR = HEALER_SIZE * sc;
+		const healerUnit = HEALER_SIZE * sc;
+		const healerBodyLen = HEALER_BODY_LEN * healerUnit;
+		const healerBodyHalfW = (HEALER_BODY_W / 2) * healerUnit;
+		const healerNoseStart = healerBodyLen;
+		const healerNoseEnd = healerNoseStart + HEALER_NOSE_LEN * healerUnit;
+		const healerNoseBaseHalfW = (HEALER_NOSE_W / 2) * healerUnit;
+		const healerNoseTipHalfW = healerNoseBaseHalfW * HEALER_NOSE_ASPECT;
 		ctx.save();
 		ctx.translate(cx, cy);
-		ctx.rotate(this.triTurret.angle);
+		ctx.save();
+		ctx.rotate(this.healerTurret.angle);
 		ctx.fillStyle = BARREL_FILL;
 		ctx.strokeStyle = BARREL_STROKE;
 		ctx.lineWidth = lw;
@@ -265,50 +273,48 @@ export class Siege {
 		for (let i = 0; i < 3; i++) {
 			ctx.save();
 			ctx.rotate((i / 3) * Math.PI * 2);
-			const recoil = this.triTurret.gunStates[i].position * triUnit;
+			const recoil = this.healerTurret.gunStates[i].position * healerUnit;
 			ctx.translate(-recoil, 0);
-			// Body section (width matches the trapezoid's wider end).
 			drawSharpPolygon(ctx, [
-				[0, triBodyHalfW],
-				[triBodyLen, triBodyHalfW],
-				[triBodyLen, -triBodyHalfW],
-				[0, -triBodyHalfW],
+				[0, healerBodyHalfW],
+				[healerBodyLen, healerBodyHalfW],
+				[healerBodyLen, -healerBodyHalfW],
+				[0, -healerBodyHalfW],
 			]);
 			ctx.fill();
 			ctx.stroke();
-			// Flared trap nose.
 			drawSharpPolygon(ctx, [
-				[triNoseStart, triNoseBaseHalfW],
-				[triNoseEnd, triNoseTipHalfW],
-				[triNoseEnd, -triNoseTipHalfW],
-				[triNoseStart, -triNoseBaseHalfW],
+				[healerNoseStart, healerNoseBaseHalfW],
+				[healerNoseEnd, healerNoseTipHalfW],
+				[healerNoseEnd, -healerNoseTipHalfW],
+				[healerNoseStart, -healerNoseBaseHalfW],
 			]);
 			ctx.fill();
 			ctx.stroke();
 			ctx.restore();
 		}
 		ctx.beginPath();
-		ctx.arc(0, 0, triR, 0, Math.PI * 2);
+		ctx.arc(0, 0, healerTurretR, 0, Math.PI * 2);
 		ctx.fill();
 		ctx.stroke();
 		ctx.restore();
-
-		// 4.6. Healer icon — OSA-style red plus mounted on the Tri turret, sized to fit.
-		const healerR = triR * 0.7;
+		// Healer hat mounted on top, sized to fit the turret.
+		const healerHatR = healerTurretR * 0.7;
 		ctx.fillStyle = HEALER_FILL;
 		ctx.strokeStyle = HEALER_STROKE;
 		ctx.lineWidth = lw;
 		ctx.lineJoin = "round";
 		ctx.beginPath();
 		for (let i = 0; i < HEALER_SHAPE.length; i++) {
-			const px = cx + HEALER_SHAPE[i][0] * healerR;
-			const py = cy + HEALER_SHAPE[i][1] * healerR;
+			const px = HEALER_SHAPE[i][0] * healerHatR;
+			const py = HEALER_SHAPE[i][1] * healerHatR;
 			if (i === 0) ctx.moveTo(px, py);
 			else ctx.lineTo(px, py);
 		}
 		ctx.closePath();
 		ctx.fill();
 		ctx.stroke();
+		ctx.restore();
 
 		// 6. Health bar — wide bar below the hexagonal base.
 		drawHealthBar(ctx, cx, cy + r * 0.3, r * 1.1, this.health, this.maxHealth, game.scale);

@@ -8,7 +8,7 @@ import { drawText } from "./render.js";
 import { tabs, generalTab } from "./tabs.js";
 import { encode, decode, saveToStorage, loadFromStorage, enableAutoSave, onBeforeSave } from "./save.js";
 import { renderDebugPanel, updateDebug, shapeUnderMouse } from "./debug.js";
-import { syncTanks, tankUnderMouse, renderTankPreview, snapshotTanks } from "./tank.js";
+import { syncTanks, tankUnderMouse, renderTankPreview, snapshotTanks, TANK_UPGRADE_SPECS, tankUpgradeCost } from "./tank.js";
 import { Siege } from "./siege.js";
 import { TANK_DEFS } from "./tankDefs.js";
 import { formatNumber } from "./utils.js";
@@ -77,6 +77,7 @@ function handleTankClicks() {
 		if (t) mouse.leftClick = false;
 	}
 	if (game.controlledTank) return;
+	if (handleTankUpgradeClicks()) return;
 	if (!mouse.leftRelease) return;
 	if (game.selectedTank) {
 		const boxes = getTankUpgradeBoxes(0);
@@ -144,6 +145,158 @@ function renderTankUpgradePanel() {
 	}
 }
 
+function getTankUpgradeBars(tank) {
+	if (!tank) return [];
+	const s = game.scale;
+	const lineH = 28 * s;
+	const subH = 24 * s;
+	const barH = 22 * s;
+	const barGap = 6 * s;
+	const barW = 220 * s;
+	const x = 12 * s;
+	const totalUpg = TANK_UPGRADE_SPECS.length * (barH + barGap) - barGap;
+	const totalH = lineH + subH + 8 * s + totalUpg;
+	const yTop = game.height - 12 * s - totalH;
+	const bars = [];
+	let by = yTop + lineH + subH + 8 * s;
+	for (const spec of TANK_UPGRADE_SPECS) {
+		bars.push({ spec, x, y: by, w: barW, h: barH });
+		by += barH + barGap;
+	}
+	return { bars, yTop, lineH, subH, x };
+}
+
+// OSA-style rounded stat bar: thick black outer line, thinner gray inner, then a
+// colored fill at level/max width — all stroked with lineCap="round" so the ends
+// are perfectly hemispherical. Vertical dividers separate filled segments.
+function drawStatBar(ctx, x, y, w, h, level, max, color) {
+	const s = game.scale;
+	const cy = y + h / 2;
+	const r = h / 2;
+	const x1 = x + r;
+	const x2 = x + w - r;
+	const span = x2 - x1;
+	const fillX = x1 + span * Math.max(0, Math.min(1, level / max));
+	const prevCap = ctx.lineCap;
+	ctx.lineCap = "round";
+	// Black outer ring
+	ctx.strokeStyle = "#000000";
+	ctx.lineWidth = h;
+	ctx.beginPath();
+	ctx.moveTo(x1, cy);
+	ctx.lineTo(x2, cy);
+	ctx.stroke();
+	// Gray interior
+	ctx.strokeStyle = "#5a5a5a";
+	ctx.lineWidth = h - 3 * s;
+	ctx.beginPath();
+	ctx.moveTo(x1, cy);
+	ctx.lineTo(x2, cy);
+	ctx.stroke();
+	// Colored fill — slightly inset from the gray so a thin gray border shows around it (OSA layered look).
+	if (level > 0) {
+		ctx.strokeStyle = color;
+		ctx.lineWidth = h - 5 * s;
+		ctx.beginPath();
+		ctx.moveTo(x1, cy);
+		ctx.lineTo(fillX, cy);
+		ctx.stroke();
+	}
+	// Black dividers between filled segments (only inside the gray track).
+	ctx.lineCap = "butt";
+	ctx.strokeStyle = "#000000";
+	ctx.lineWidth = Math.max(1, 1.5 * s);
+	for (let i = 1; i < max; i++) {
+		const dx = x1 + span * (i / max);
+		ctx.beginPath();
+		ctx.moveTo(dx, y + 2 * s);
+		ctx.lineTo(dx, y + h - 2 * s);
+		ctx.stroke();
+	}
+	ctx.lineCap = prevCap;
+}
+
+function bulkBuyQuantity() {
+	if (keys.pressed.has("AltLeft") || keys.pressed.has("AltRight")) return 100;
+	if (keys.pressed.has("ShiftLeft") || keys.pressed.has("ShiftRight")) return 10;
+	return 1;
+}
+
+// Returns { count, total } where count is the number actually affordable up to the
+// max level and the desired bulk amount, and total is the score required.
+function planBulkUpgrade(tank, spec, desired) {
+	let level = tank.upgrades[spec.key];
+	let total = 0;
+	let count = 0;
+	let scoreLeft = state.score;
+	while (count < desired && level < spec.max) {
+		const cost = tankUpgradeCost(spec, level);
+		if (scoreLeft < cost) break;
+		scoreLeft -= cost;
+		total += cost;
+		level += 1;
+		count += 1;
+	}
+	return { count, total };
+}
+
+function renderTankInfoPanel(tank) {
+	const ctx = game.ctx;
+	const s = game.scale;
+	const layout = getTankUpgradeBars(tank);
+	const { yTop, lineH, subH, x, bars } = layout;
+	const isDead = tank.isDead && tank.isDead();
+	const hp = Math.max(0, Math.floor(tank.health));
+	const hpLabel = " - " + hp + "/" + tank.maxHealth + " HP" + (isDead ? ", DEAD" : ", +0.5 HP/s");
+	drawText(ctx, tank.classification + hpLabel, x, yTop, false, true, false, 28 * s);
+	drawText(
+		ctx,
+		"Lvl " + tank.level + " (" + formatNumber(tank.xpProgress()) + "/" + formatNumber(tank.xpNeeded()) + ")",
+		x, yTop + lineH, false, true, false, 24 * s,
+	);
+	const desired = bulkBuyQuantity();
+	for (const b of bars) {
+		const level = tank.upgrades?.[b.spec.key] ?? 0;
+		const maxed = level >= b.spec.max;
+		const plan = maxed ? { count: 0, total: 0 } : planBulkUpgrade(tank, b.spec, desired);
+		const canAfford = plan.count > 0;
+		const hovered = mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+		drawStatBar(ctx, b.x, b.y, b.w, b.h, level, b.spec.max, b.spec.color);
+		if (hovered && !maxed) {
+			ctx.fillStyle = mouse.left && canAfford ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.18)";
+			ctx.fillRect(b.x, b.y, b.w, b.h);
+		}
+		drawText(ctx, b.spec.label + " " + level + "/" + b.spec.max, b.x + 8 * s, b.y + b.h / 2 - 8 * s, false, true, false, 16 * s);
+		let costText;
+		if (maxed) costText = "MAX";
+		else if (desired > 1 && plan.count >= 1) costText = formatNumber(plan.total) + " (x" + plan.count + ")";
+		else if (canAfford) costText = formatNumber(plan.total);
+		else costText = formatNumber(tankUpgradeCost(b.spec, level)) + " (need score)";
+		drawText(ctx, costText, b.x + b.w + 10 * s, b.y + b.h / 2 - 8 * s, !canAfford && !maxed, true, false, 16 * s);
+	}
+}
+
+function handleTankUpgradeClicks() {
+	const tank = game.selectedTank;
+	if (!tank) return false;
+	if (!mouse.leftRelease) return false;
+	const { bars } = getTankUpgradeBars(tank);
+	const desired = bulkBuyQuantity();
+	for (const b of bars) {
+		if (mouse.x < b.x || mouse.x > b.x + b.w) continue;
+		if (mouse.y < b.y || mouse.y > b.y + b.h) continue;
+		const level = tank.upgrades[b.spec.key];
+		if (level >= b.spec.max) return true;
+		const plan = planBulkUpgrade(tank, b.spec, desired);
+		if (plan.count <= 0) return true;
+		state.score -= plan.total;
+		tank.upgrades[b.spec.key] = level + plan.count;
+		mouse.leftRelease = false;
+		return true;
+	}
+	return false;
+}
+
 game.init({ Room, tabs, generalTab });
 
 loadFromStorage();
@@ -189,23 +342,7 @@ function frame(now) {
 		const hoveredTank = game.selectedTank;
 		const hovered = hoveredTank ? null : shapeUnderMouse();
 		if (hoveredTank) {
-			const s = game.scale;
-			const lineH = 28 * s;
-			const x = 12 * s;
-			const yBase = game.height - 12 * s - lineH * 2;
-			const isDead = hoveredTank.isDead && hoveredTank.isDead();
-			const hpLabel = " - " + Math.max(0, Math.floor(hoveredTank.health)) + "/" + hoveredTank.maxHealth + (isDead ? ", DEAD" : ", +0.5/s");
-			drawText(game.ctx, hoveredTank.classification + hpLabel, x, yBase, false, true, false, 28 * s);
-			drawText(
-				game.ctx,
-				"Lvl " + hoveredTank.level + " (" + formatNumber(hoveredTank.xpProgress()) + "/" + formatNumber(hoveredTank.xpNeeded()) + ")",
-				x,
-				yBase + lineH,
-				false,
-				true,
-				false,
-				24 * s,
-			);
+			renderTankInfoPanel(hoveredTank);
 		} else if (hovered) {
 			const s = game.scale;
 			const lineH = 28 * s;

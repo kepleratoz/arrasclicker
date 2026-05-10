@@ -250,54 +250,6 @@ export const hexagonUpgrades = [new HexagonEvolution(), new HexagonEvoTime(), ne
 
 // ---------- Tank ----------
 const TANK_COLOR = "#58b0d0";
-class TankHp {
-	button = new Button(() => { state.score -= this.cost(); state.tankHpUpgrades += 1; }, TANK_COLOR);
-	getLabel() { return "+10% Max Tank Health (" + (state.tankHpUpgrades || 0) + "/10)"; }
-	max() { return (state.tankHpUpgrades || 0) >= 10; }
-	cost() { return 100 * Math.pow(40, state.tankHpUpgrades || 0); }
-	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
-	isDisabled() { return this.max() || state.score < this.cost(); }
-}
-class TankReload {
-	button = new Button(() => { state.score -= this.cost(); state.tankReloadUpgrades += 1; }, TANK_COLOR);
-	getLabel() { return "-10% Reload (" + state.tankReloadUpgrades + "/5)"; }
-	max() { return state.tankReloadUpgrades >= 5; }
-	cost() { return 1e12 * Math.pow(2, state.tankReloadUpgrades); }
-	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
-	isDisabled() { return this.max() || state.score < this.cost(); }
-}
-class TankDamage {
-	button = new Button(() => { state.score -= this.cost(); state.tankDamageUpgrades += 1; }, TANK_COLOR);
-	getLabel() { return "+0.5 Damage (" + state.tankDamageUpgrades + "/5)"; }
-	max() { return state.tankDamageUpgrades >= 5; }
-	cost() { return 1e12 * Math.pow(2, state.tankDamageUpgrades); }
-	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
-	isDisabled() { return this.max() || state.score < this.cost(); }
-}
-class TankHealth {
-	button = new Button(() => { state.score -= this.cost(); state.tankHealthUpgrades += 1; }, TANK_COLOR);
-	getLabel() { return "+20% Bullet Health (" + state.tankHealthUpgrades + "/5)"; }
-	max() { return state.tankHealthUpgrades >= 5; }
-	cost() { return 1e12 * Math.pow(2, state.tankHealthUpgrades); }
-	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
-	isDisabled() { return this.max() || state.score < this.cost(); }
-}
-class TankSpeed {
-	button = new Button(() => { state.score -= this.cost(); state.tankSpeedUpgrades += 1; }, TANK_COLOR);
-	getLabel() { return "+33% Movement Speed (" + state.tankSpeedUpgrades + "/3)"; }
-	max() { return state.tankSpeedUpgrades >= 3; }
-	cost() { return 1e14 * Math.pow(2, state.tankSpeedUpgrades); }
-	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
-	isDisabled() { return this.max() || state.score < this.cost(); }
-}
-class TankBulletSpeed {
-	button = new Button(() => { state.score -= this.cost(); state.tankBulletSpeedUpgrades += 1; }, TANK_COLOR);
-	getLabel() { return "+20% Bullet Speed (" + state.tankBulletSpeedUpgrades + "/5)"; }
-	max() { return state.tankBulletSpeedUpgrades >= 5; }
-	cost() { return 1e12 * Math.pow(2, state.tankBulletSpeedUpgrades); }
-	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
-	isDisabled() { return this.max() || state.score < this.cost(); }
-}
 class TankRarityCap {
 	button = new SliderButton(
 		RARITY_TIER_NAMES,
@@ -314,7 +266,7 @@ class TankRarityCap {
 	getSecondary() { return ""; }
 	isDisabled() { return false; }
 }
-export const tankUpgrades = [new TankHp(), new TankReload(), new TankDamage(), new TankHealth(), new TankBulletSpeed(), new TankSpeed(), new TankRarityCap()];
+export const tankUpgrades = [new TankRarityCap()];
 
 class UnlockShadow {
 	button = new Button(() => { state.score -= this.cost(); state.rarityCap = Math.max(state.rarityCap, 2); }, colors.shadow, "rgba(34,34,34,0.4)");

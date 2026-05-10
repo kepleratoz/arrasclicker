@@ -24,16 +24,35 @@ const BASE_TANK_SPEED = 1.2;
 const UPGRADE_LEVEL = 15;
 const UPGRADES_ENABLED = true;
 
-function tankShootInterval() { return BASE_SHOOT_INTERVAL * Math.pow(0.9, state.tankReloadUpgrades); }
+// Per-tank upgrade specs (also used by main.js for the per-tank upgrade panel).
+// `color` matches the OSA stat-bar palette (Max Health=gold, Reload=lgreen, Bullet
+// Damage=red, Bullet Health=green, Bullet Speed=teal, Move Speed=blue).
+export const TANK_UPGRADE_SPECS = [
+	{ key: "hp",          label: "Max Health",    max: 10, baseCost: 100,  growth: 40, color: "#efc74b" },
+	{ key: "reload",      label: "Reload",        max: 5,  baseCost: 1e12, growth: 2,  color: "#b9e87e" },
+	{ key: "damage",      label: "Damage",        max: 5,  baseCost: 1e12, growth: 2,  color: "#e03e41" },
+	{ key: "bulletHealth",label: "Bullet Health", max: 5,  baseCost: 1e12, growth: 2,  color: "#8abc3f" },
+	{ key: "bulletSpeed", label: "Bullet Speed",  max: 5,  baseCost: 1e12, growth: 2,  color: "#7ad3db" },
+	{ key: "speed",       label: "Move Speed",    max: 3,  baseCost: 1e14, growth: 2,  color: "#3ca4cb" },
+];
+export function tankUpgradeCost(spec, level) { return spec.baseCost * Math.pow(spec.growth, level); }
+function defaultUpgrades() {
+	const o = {};
+	for (const spec of TANK_UPGRADE_SPECS) o[spec.key] = 0;
+	return o;
+}
+function up(tank, key) { return tank?.upgrades?.[key] ?? 0; }
+
+function tankShootInterval(tank) { return BASE_SHOOT_INTERVAL * Math.pow(0.9, up(tank, "reload")); }
 function tankCanTarget(shape) { return shape.rarity < state.tankRarityCap - 1; }
 function tankCanLockOn(shape) { return tankCanTarget(shape) && shape.rarity !== 4; }
 function tankDamageMul(shape) { return shape.rarity === 4 ? 0.1 : 1; }
-function tankBaseDamage() { return 1 + 0.5 * state.tankDamageUpgrades; }
+function tankBaseDamage(tank) { return 1 + 0.5 * up(tank, "damage"); }
 function tankBulletLife() { return BASE_BULLET_LIFE; }
-function tankBulletHealth() { return 5 * Math.pow(1.2, state.tankHealthUpgrades); }
-function tankSpeed() { return BASE_TANK_SPEED * Math.pow(1.33, state.tankSpeedUpgrades); }
-function tankBulletSpeedMul() { return Math.pow(1.2, state.tankBulletSpeedUpgrades); }
-function tankMaxHealth() { return 10 * (1 + 0.1 * (state.tankHpUpgrades || 0)); }
+function tankBulletHealth(tank) { return 5 * Math.pow(1.2, up(tank, "bulletHealth")); }
+function tankSpeed(tank) { return BASE_TANK_SPEED * Math.pow(1.33, up(tank, "speed")); }
+function tankBulletSpeedMul(tank) { return Math.pow(1.2, up(tank, "bulletSpeed")); }
+function tankMaxHealth(tank) { return 10 * (1 + 0.1 * up(tank, "hp")); }
 const COLLISION_COOLDOWN_FRAMES = 3; // 60fps / 20 hits-per-second
 const DEATH_FRAMES = 18; // ~300ms at 60fps to match OSA's getFade decay
 
@@ -49,14 +68,16 @@ export class Bullet {
 		this.isTrap = !!shootCfg.isTrap;
 		const upgradeSpeedMul = shootCfg.ignoreUpgradeSpeed
 			? 1
-			: this.isTrap ? 1 + (tankBulletSpeedMul() - 1) * 0.5 : tankBulletSpeedMul();
+			: this.isTrap ? 1 + (tankBulletSpeedMul(tank) - 1) * 0.5 : tankBulletSpeedMul(tank);
 		this.velocity = Vec2.circle(angle, BULLET_SPEED * speedMul * shudderMul * upgradeSpeedMul);
 		this.size = sizeOverride ?? (tank.size * gunWidth * sizeMul) / 2;
 		this.tank = tank;
 		this.life = tankBulletLife() * rangeMul * (this.isTrap ? 3 : 1);
-		this.damage = (shootCfg.ignoreUpgradeDamage ? 1 : tankBaseDamage()) * damageMul;
-		this.health = (shootCfg.ignoreUpgradeHealth ? 5 : tankBulletHealth()) * healthMul;
+		this.damage = (shootCfg.ignoreUpgradeDamage ? 1 : tankBaseDamage(tank)) * damageMul;
+		this.health = (shootCfg.ignoreUpgradeHealth ? 5 : tankBulletHealth(tank)) * healthMul;
 		this.maxHealth = this.health;
+		this.isHeal = !!shootCfg.isHeal;
+		this.healAmount = shootCfg.healAmount ?? 0;
 		this.collisionCooldown = 0;
 		this.dying = 0;
 		this.dead = false;
@@ -87,6 +108,22 @@ export class Bullet {
 		}
 		this.life -= 1;
 		if (this.life <= 0) { this.startDying(); return; }
+		if (this.isHeal) {
+			// Heal bullets only interact with injured tanks; they pass through everything else,
+			// deal no damage, and instantly break on healing impact.
+			for (const t of game.tanks) {
+				if (t.isDead && t.isDead()) continue;
+				if (t.health >= t.maxHealth) continue;
+				const dx = t.pos.x - this.pos.x;
+				const dy = t.pos.y - this.pos.y;
+				if (Math.sqrt(dx * dx + dy * dy) < t.size + this.size) {
+					t.health = Math.min(t.maxHealth, t.health + this.healAmount);
+					this.startDying();
+					return;
+				}
+			}
+			return;
+		}
 		if (this.collisionCooldown > 0) { this.collisionCooldown -= 1; return; }
 		for (const shape of game.shapes) {
 			if (shape.isDead() || !tankCanTarget(shape)) continue;
@@ -179,7 +216,8 @@ export class Tank {
 		this.levelUpScore = scoreForLevel(this.level);
 		this.setClass("basic");
 		this.recomputeSize();
-		this.maxHealth = tankMaxHealth();
+		this.upgrades = defaultUpgrades();
+		this.maxHealth = tankMaxHealth(this);
 		this.health = this.maxHealth;
 		this.respawnAt = null;       // performance.now() timestamp; null while alive.
 		this.deathPos = null;
@@ -219,7 +257,7 @@ export class Tank {
 		this.levelUpScore = scoreForLevel(this.level);
 		this.setClass("basic");
 		this.recomputeSize();
-		this.maxHealth = tankMaxHealth();
+		this.maxHealth = tankMaxHealth(this);
 		this.health = this.maxHealth;
 		this.velocity = new Vec2();
 		this.respawnAt = null;
@@ -228,7 +266,7 @@ export class Tank {
 		this.spawnStartTime = performance.now();
 	}
 	syncMaxHealth() {
-		const newMax = tankMaxHealth();
+		const newMax = tankMaxHealth(this);
 		if (newMax !== this.maxHealth) {
 			const ratio = this.maxHealth > 0 ? this.health / this.maxHealth : 1;
 			this.maxHealth = newMax;
@@ -319,7 +357,7 @@ export class Tank {
 			if (keys.pressed.has("KeyA")) dx -= 1;
 			if (keys.pressed.has("KeyD")) dx += 1;
 			const len = Math.sqrt(dx * dx + dy * dy);
-			const speed = tankSpeed();
+			const speed = tankSpeed(this);
 			if (len > 0) {
 				this.velocity.x = (dx / len) * speed;
 				this.velocity.y = (dy / len) * speed;
@@ -346,7 +384,7 @@ export class Tank {
 				this.angle += Math.max(-MAX_TURN_PER_FRAME, Math.min(MAX_TURN_PER_FRAME, delta));
 				const dist = Math.sqrt(dx * dx + dy * dy);
 				const desired = Math.max(60, target.size + this.size + 30);
-				const speed = tankSpeed();
+				const speed = tankSpeed(this);
 				if (dist > desired) {
 					this.velocity.x = Math.cos(this.angle) * speed;
 					this.velocity.y = Math.sin(this.angle) * speed;
@@ -386,7 +424,7 @@ export class Tank {
 			const gs = this.gunStates[i];
 			if (gun.shoot) {
 				const reloadMul = gun.shoot.reload ?? 1;
-				const interval = tankShootInterval() * reloadMul;
+				const interval = tankShootInterval(this) * reloadMul;
 				if (!gs.delayInitialized) {
 					gs.shootTime = now + gs.initialDelay * interval;
 					gs.delayInitialized = true;
@@ -573,7 +611,10 @@ export function syncTanks() {
 			t.deduction = saved.deduction ?? 0;
 			t.levelUpScore = saved.levelUpScore ?? scoreForLevel(t.level);
 			if (saved.pos) { t.pos.x = saved.pos.x; t.pos.y = saved.pos.y; }
+			if (saved.upgrades) t.upgrades = { ...defaultUpgrades(), ...saved.upgrades };
 			t.recomputeSize();
+			t.maxHealth = tankMaxHealth(t);
+			t.health = saved.health != null ? Math.min(saved.health, t.maxHealth) : t.maxHealth;
 		}
 		game.tanks.push(t);
 	}
@@ -588,5 +629,7 @@ export function snapshotTanks() {
 		deduction: t.deduction,
 		levelUpScore: t.levelUpScore,
 		pos: { x: t.pos.x, y: t.pos.y },
+		upgrades: { ...t.upgrades },
+		health: t.health,
 	}));
 }
