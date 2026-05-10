@@ -16,6 +16,32 @@ export function drawText(ctx, text, x, y, isWarning = false, stroke = true, cent
 	ctx.fillText(text, x, y);
 }
 
+// OSA-style health bar: black background line + colored health line, both round-capped.
+// Renders only when health < maxHealth. (cx, cy) is the entity center; halfSize is the bar half-width.
+export function drawHealthBar(ctx, cx, cy, halfSize, health, maxHealth, scale, forceShow = false) {
+	if (maxHealth <= 0) return;
+	if (!forceShow && health >= maxHealth) return;
+	const barY = cy + halfSize + 14 * scale;
+	const bgW = 6 * scale;
+	const fgW = 4 * scale;
+	const ratio = Math.max(0, Math.min(1, health / maxHealth));
+	const prevCap = ctx.lineCap;
+	ctx.lineCap = "round";
+	ctx.strokeStyle = "#000000";
+	ctx.lineWidth = bgW;
+	ctx.beginPath();
+	ctx.moveTo(cx - halfSize, barY);
+	ctx.lineTo(cx + halfSize, barY);
+	ctx.stroke();
+	ctx.strokeStyle = "#85e37d";
+	ctx.lineWidth = fgW;
+	ctx.beginPath();
+	ctx.moveTo(cx - halfSize, barY);
+	ctx.lineTo(cx - halfSize + 2 * halfSize * ratio, barY);
+	ctx.stroke();
+	ctx.lineCap = prevCap;
+}
+
 export function drawPolygon(ctx, x, y, radius, angle, sides) {
 	const screenScale = game.scale * game.room.fov;
 	ctx.beginPath();

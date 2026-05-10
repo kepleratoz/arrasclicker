@@ -1,6 +1,7 @@
-import { Vec2 } from "./utils.js";
+import { Vec2, REGEN_PER_FRAME } from "./utils.js";
 import { game } from "./game.js";
 import { Bullet } from "./tank.js";
+import { drawHealthBar } from "./render.js";
 
 // Body: 3× a fully-grown level-42 tank.
 //   level-42 tank size = TANK_SIZE × (1 + 42/42) = 12 × 2 = 24, so siege body = 72.
@@ -96,6 +97,8 @@ export class Siege {
 		this.pos = new Vec2();
 		this.angle = 0;
 		this.size = BODY_SIZE;
+		this.maxHealth = 300;
+		this.health = 300;
 		this.bullets = [];
 		this.shootTime = 0;
 		this.gunStates = Array.from({ length: BARREL_COUNT }, () => ({ position: 0, motion: 0 }));
@@ -134,6 +137,7 @@ export class Siege {
 			this.shootTime = now + SHOOT_INTERVAL;
 		}
 		this.updateTriTurret(now);
+		if (this.health < this.maxHealth) this.health = Math.min(this.maxHealth, this.health + REGEN_PER_FRAME);
 		// Per-barrel recoil spring
 		for (const gs of this.gunStates) {
 			gs.motion -= RECOIL_SPRING * gs.position;
@@ -156,6 +160,9 @@ export class Siege {
 			this.bullets.push(new Bullet(new Vec2(tipX, tipY), a, this, SIEGE_TRAP_SHOOT, 0.7, 1, SIEGE_TRAP_BULLET_RADIUS));
 			this.gunStates[i].motion += RECOIL_IMPULSE;
 		}
+	}
+	takeDamage(n) {
+		this.health = Math.max(0, this.health - n);
 	}
 	render(ctx) {
 		const sc = game.scale * game.room.fov;
@@ -303,5 +310,7 @@ export class Siege {
 		ctx.fill();
 		ctx.stroke();
 
+		// 6. Health bar — wide bar below the hexagonal base.
+		drawHealthBar(ctx, cx, cy + r * 0.3, r * 1.1, this.health, this.maxHealth, game.scale);
 	}
 }

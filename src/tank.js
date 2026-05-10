@@ -1,12 +1,17 @@
 import { state } from "./state.js";
-import { Vec2, formatNumber } from "./utils.js";
+import { Vec2, formatNumber, lerpColor, REGEN_PER_FRAME } from "./utils.js";
 import { game } from "./game.js";
 import { mouse, keys } from "./input.js";
-import { drawPolygon } from "./render.js";
+import { drawPolygon, drawHealthBar, drawText } from "./render.js";
 import { TANK_DEFS } from "./tankDefs.js";
 
 const BODY_FILL = "#58b0d0";
 const BODY_STROKE = "#48646e";
+const DEAD_FILL = "#707070";          // gray body for dying/spawning tanks.
+const DEAD_STROKE = "#3f3f3f";
+const DEATH_ANIM_MS = 2000;          // blue → gray blend duration on death.
+const CORPSE_FADE_MS = 300;          // fade-out + expand at the end of the dead window.
+const SPAWN_FADE_MS = 300;           // reverse fade-in + shrink when respawning.
 const BARREL_FILL = "#b1b3bc";
 const BARREL_STROKE = "#646568";
 const ALERT_COLOR = "#ff3030";
@@ -28,6 +33,7 @@ function tankBulletLife() { return BASE_BULLET_LIFE; }
 function tankBulletHealth() { return 5 * Math.pow(1.2, state.tankHealthUpgrades); }
 function tankSpeed() { return BASE_TANK_SPEED * Math.pow(1.33, state.tankSpeedUpgrades); }
 function tankBulletSpeedMul() { return Math.pow(1.2, state.tankBulletSpeedUpgrades); }
+function tankMaxHealth() { return 10 * (1 + 0.1 * (state.tankHpUpgrades || 0)); }
 const COLLISION_COOLDOWN_FRAMES = 3; // 60fps / 20 hits-per-second
 const DEATH_FRAMES = 18; // ~300ms at 60fps to match OSA's getFade decay
 
@@ -50,6 +56,7 @@ export class Bullet {
 		this.life = tankBulletLife() * rangeMul * (this.isTrap ? 3 : 1);
 		this.damage = (shootCfg.ignoreUpgradeDamage ? 1 : tankBaseDamage()) * damageMul;
 		this.health = (shootCfg.ignoreUpgradeHealth ? 5 : tankBulletHealth()) * healthMul;
+		this.maxHealth = this.health;
 		this.collisionCooldown = 0;
 		this.dying = 0;
 		this.dead = false;
@@ -59,11 +66,19 @@ export class Bullet {
 		if (!state.bulletDeathAnimEnabled) { this.dead = true; return; }
 		this.dying = 1;
 	}
+	takeDamage(n) {
+		if (this.dying) return;
+		this.health -= n;
+		if (this.health <= 0) this.startDying();
+	}
 	update() {
 		this.pos.add(this.velocity);
 		if (this.isTrap) {
 			this.velocity.mulVal(0.97);
 			this.angle += this.velocity.length() * 0.04;
+		}
+		if (!this.dying && this.health < this.maxHealth) {
+			this.health = Math.min(this.maxHealth, this.health + REGEN_PER_FRAME);
 		}
 		if (this.dying) {
 			this.dying += 1;
@@ -134,6 +149,7 @@ function drawTrap(ctx, x, y, radius, angle) {
 }
 
 const MAX_TURN_PER_FRAME = 0.12;
+const DEATH_TURN_PER_FRAME = MAX_TURN_PER_FRAME * 1.5;  // ~normal turn speed for the random spin on death.
 const RECOIL_IMPULSE = 0.18;
 const RECOIL_SPRING = 0.2;
 const RECOIL_DAMP = 0.5;
@@ -163,6 +179,66 @@ export class Tank {
 		this.levelUpScore = scoreForLevel(this.level);
 		this.setClass("basic");
 		this.recomputeSize();
+		this.maxHealth = tankMaxHealth();
+		this.health = this.maxHealth;
+		this.respawnAt = null;       // performance.now() timestamp; null while alive.
+		this.deathPos = null;
+		this.deathStartTime = null;  // when current death animation started.
+		this.spawnStartTime = null;  // when current spawn animation started.
+	}
+	isDead() { return this.respawnAt !== null; }
+	die() {
+		const now = performance.now();
+		this.deathPos = new Vec2(this.pos.x, this.pos.y);
+		// Pick a death-target angle that's a noticeable turn (90°–270°) from the current heading.
+		const sign = Math.random() < 0.5 ? -1 : 1;
+		this.deathTargetAngle = this.angle + sign * (Math.PI * 0.5 + Math.random() * Math.PI);
+		this.respawnAt = now + 30000;
+		this.deathStartTime = now;
+		this.spawnStartTime = null;
+		this.velocity = new Vec2();
+		this.target = null;
+		if (game.controlledTank === this) game.controlledTank = null;
+	}
+	respawn() {
+		let nearest = null;
+		let bestDistSq = Infinity;
+		for (const sg of game.sieges) {
+			const dx = sg.pos.x - this.deathPos.x;
+			const dy = sg.pos.y - this.deathPos.y;
+			const d = dx * dx + dy * dy;
+			if (d < bestDistSq) { bestDistSq = d; nearest = sg; }
+		}
+		if (nearest) {
+			this.pos.x = nearest.pos.x;
+			this.pos.y = nearest.pos.y;
+		}
+		this.level = 1;
+		this.xp = 0;
+		this.deduction = 0;
+		this.levelUpScore = scoreForLevel(this.level);
+		this.setClass("basic");
+		this.recomputeSize();
+		this.maxHealth = tankMaxHealth();
+		this.health = this.maxHealth;
+		this.velocity = new Vec2();
+		this.respawnAt = null;
+		this.deathPos = null;
+		this.deathStartTime = null;
+		this.spawnStartTime = performance.now();
+	}
+	syncMaxHealth() {
+		const newMax = tankMaxHealth();
+		if (newMax !== this.maxHealth) {
+			const ratio = this.maxHealth > 0 ? this.health / this.maxHealth : 1;
+			this.maxHealth = newMax;
+			this.health = newMax * ratio;
+		}
+	}
+	takeDamage(n) {
+		if (this.isDead()) return;
+		this.health = Math.max(0, this.health - n);
+		if (this.health <= 0) this.die();
 	}
 	setClass(defKey) {
 		this.defKey = defKey;
@@ -211,6 +287,25 @@ export class Tank {
 		return best;
 	}
 	update() {
+		if (this.isDead()) {
+			const now = performance.now();
+			if (now >= this.respawnAt) this.respawn();
+			else {
+				if (this.deathTargetAngle != null) {
+					let delta = this.deathTargetAngle - this.angle;
+					while (delta > Math.PI) delta -= Math.PI * 2;
+					while (delta < -Math.PI) delta += Math.PI * 2;
+					this.angle += Math.max(-DEATH_TURN_PER_FRAME, Math.min(DEATH_TURN_PER_FRAME, delta));
+				}
+				for (let i = this.bullets.length - 1; i >= 0; --i) {
+					this.bullets[i].update();
+					if (this.bullets[i].dead) this.bullets.splice(i, 1);
+				}
+				return;
+			}
+		}
+		this.syncMaxHealth();
+		if (this.health < this.maxHealth) this.health = Math.min(this.maxHealth, this.health + REGEN_PER_FRAME);
 		const isControlled = game.controlledTank === this;
 		let target;
 		if (isControlled) {
@@ -319,10 +414,52 @@ export class Tank {
 			if (gs.gunMotion > 0) gs.gunMotion *= RECOIL_DAMP;
 		}
 	}
-	render(ctx) { renderTank(ctx, this, this.pos.x, this.pos.y, this.angle, this.size, true); }
+	render(ctx) {
+		const now = performance.now();
+		const sc = game.scale * game.room.fov;
+		// Bullets always render at full opacity, regardless of corpse/spawn fade.
+		for (const b of this.bullets) b.render(ctx);
+		if (this.isDead()) {
+			const remaining = this.respawnAt - now;
+			if (remaining < CORPSE_FADE_MS) {
+				// Corpse fade: become fainter and expand out, like a bullet/shape death.
+				const p = Math.max(0, Math.min(1, 1 - remaining / CORPSE_FADE_MS));
+				ctx.globalAlpha = 1 - p;
+				renderTank(ctx, this, this.deathPos.x, this.deathPos.y, this.angle, this.size * (1 + 0.5 * p), true, DEAD_FILL, DEAD_STROKE, true);
+				ctx.globalAlpha = 1;
+			} else {
+				const sinceDeath = now - this.deathStartTime;
+				const t = Math.min(1, sinceDeath / DEATH_ANIM_MS);
+				const fill = lerpColor(BODY_FILL, DEAD_FILL, t);
+				const stroke = lerpColor(BODY_STROKE, DEAD_STROKE, t);
+				renderTank(ctx, this, this.deathPos.x, this.deathPos.y, this.angle, this.size, true, fill, stroke, true);
+			}
+			drawText(
+				ctx,
+				Math.max(0, remaining / 1000).toFixed(1) + "s",
+				this.deathPos.x * sc,
+				this.deathPos.y * sc - this.size * sc - 22 * game.scale,
+				false, true, true, 24 * game.scale,
+			);
+			return;
+		}
+		if (this.spawnStartTime !== null) {
+			const sinceSpawn = now - this.spawnStartTime;
+			if (sinceSpawn < SPAWN_FADE_MS) {
+				// Reverse of corpse fade: start big and faint, settle to normal size and full opacity.
+				const p = 1 - sinceSpawn / SPAWN_FADE_MS;
+				ctx.globalAlpha = 1 - p;
+				renderTank(ctx, this, this.pos.x, this.pos.y, this.angle, this.size * (1 + 0.5 * p), true, BODY_FILL, BODY_STROKE, true);
+				ctx.globalAlpha = 1;
+				return;
+			}
+			this.spawnStartTime = null;
+		}
+		renderTank(ctx, this, this.pos.x, this.pos.y, this.angle, this.size, true, BODY_FILL, BODY_STROKE, true);
+	}
 }
 
-function drawTankShape(ctx, def, gunStates, cx, cy, angle, sizePx, lineWidth) {
+function drawTankShape(ctx, def, gunStates, cx, cy, angle, sizePx, lineWidth, bodyFill = BODY_FILL, bodyStroke = BODY_STROKE) {
 	const cosA = Math.cos(angle);
 	const sinA = Math.sin(angle);
 	for (let i = 0; i < def.guns.length; ++i) {
@@ -362,8 +499,8 @@ function drawTankShape(ctx, def, gunStates, cx, cy, angle, sizePx, lineWidth) {
 		ctx.stroke();
 		ctx.restore();
 	}
-	ctx.fillStyle = BODY_FILL;
-	ctx.strokeStyle = BODY_STROKE;
+	ctx.fillStyle = bodyFill;
+	ctx.strokeStyle = bodyStroke;
 	ctx.lineWidth = lineWidth;
 	ctx.beginPath();
 	ctx.arc(cx, cy, sizePx, 0, Math.PI * 2);
@@ -371,15 +508,18 @@ function drawTankShape(ctx, def, gunStates, cx, cy, angle, sizePx, lineWidth) {
 	ctx.stroke();
 }
 
-function renderTank(ctx, tank, posX, posY, angle, size, applyRoomFov) {
+function renderTank(ctx, tank, posX, posY, angle, size, applyRoomFov, bodyFill = BODY_FILL, bodyStroke = BODY_STROKE, skipBullets = false) {
 	const sc = applyRoomFov ? game.scale * game.room.fov : game.scale;
 	const cx = posX * sc;
 	const cy = posY * sc;
 	const def = TANK_DEFS[tank.defKey];
-	if (applyRoomFov) {
+	if (applyRoomFov && !skipBullets) {
 		for (const b of tank.bullets) b.render(ctx);
 	}
-	drawTankShape(ctx, def, tank.gunStates, cx, cy, angle, size * sc, 4 * sc);
+	drawTankShape(ctx, def, tank.gunStates, cx, cy, angle, size * sc, 4 * sc, bodyFill, bodyStroke);
+	if (applyRoomFov && tank.maxHealth != null && !(tank.isDead && tank.isDead())) {
+		drawHealthBar(ctx, cx, cy, size * sc, tank.health, tank.maxHealth, game.scale);
+	}
 	if (applyRoomFov) {
 		if (game.controlledTank === tank) {
 			ctx.strokeStyle = "#ffffff";

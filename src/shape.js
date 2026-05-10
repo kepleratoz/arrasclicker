@@ -1,5 +1,5 @@
 import { state } from "./state.js";
-import { Vec2, darken, colors, formatNumber } from "./utils.js";
+import { Vec2, darken, colors, formatNumber, REGEN_PER_FRAME } from "./utils.js";
 import { mouse } from "./input.js";
 import { drawPolygon } from "./render.js";
 import { game } from "./game.js";
@@ -135,6 +135,7 @@ export class Shape {
 			return;
 		}
 		if (this.layers < state.layersCaps[this.type] && performance.now() > this.evoTime) this.evolve();
+		if (this.health < this.maxHealth) this.health = Math.min(this.maxHealth, this.health + REGEN_PER_FRAME);
 		this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
 		if ((mouse.leftClick || mouse.right) && !game.debugMode && !game.controlledTank) {
 			const screenScale = game.scale * game.room.fov;

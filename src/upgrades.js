@@ -250,6 +250,14 @@ export const hexagonUpgrades = [new HexagonEvolution(), new HexagonEvoTime(), ne
 
 // ---------- Tank ----------
 const TANK_COLOR = "#58b0d0";
+class TankHp {
+	button = new Button(() => { state.score -= this.cost(); state.tankHpUpgrades += 1; }, TANK_COLOR);
+	getLabel() { return "+10% Max Tank Health (" + (state.tankHpUpgrades || 0) + "/10)"; }
+	max() { return (state.tankHpUpgrades || 0) >= 10; }
+	cost() { return 100 * Math.pow(40, state.tankHpUpgrades || 0); }
+	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
+	isDisabled() { return this.max() || state.score < this.cost(); }
+}
 class TankReload {
 	button = new Button(() => { state.score -= this.cost(); state.tankReloadUpgrades += 1; }, TANK_COLOR);
 	getLabel() { return "-10% Reload (" + state.tankReloadUpgrades + "/5)"; }
@@ -306,7 +314,7 @@ class TankRarityCap {
 	getSecondary() { return ""; }
 	isDisabled() { return false; }
 }
-export const tankUpgrades = [new TankReload(), new TankDamage(), new TankHealth(), new TankBulletSpeed(), new TankSpeed(), new TankRarityCap()];
+export const tankUpgrades = [new TankHp(), new TankReload(), new TankDamage(), new TankHealth(), new TankBulletSpeed(), new TankSpeed(), new TankRarityCap()];
 
 class UnlockShadow {
 	button = new Button(() => { state.score -= this.cost(); state.rarityCap = Math.max(state.rarityCap, 2); }, colors.shadow, "rgba(34,34,34,0.4)");

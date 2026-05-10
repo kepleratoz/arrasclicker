@@ -68,6 +68,7 @@ function handleTankClicks() {
 	if (mouse.leftClick) {
 		const t = tankUnderMouse();
 		if (t && shiftHeld) {
+			if (t.isDead && t.isDead()) { mouse.leftClick = false; return; }
 			game.controlledTank = game.controlledTank === t ? null : t;
 			game.selectedTank = null;
 			mouse.leftClick = false;
@@ -192,7 +193,9 @@ function frame(now) {
 			const lineH = 28 * s;
 			const x = 12 * s;
 			const yBase = game.height - 12 * s - lineH * 2;
-			drawText(game.ctx, hoveredTank.classification, x, yBase, false, true, false, 28 * s);
+			const isDead = hoveredTank.isDead && hoveredTank.isDead();
+			const hpLabel = " - " + Math.max(0, Math.floor(hoveredTank.health)) + "/" + hoveredTank.maxHealth + (isDead ? ", DEAD" : ", +0.5/s");
+			drawText(game.ctx, hoveredTank.classification + hpLabel, x, yBase, false, true, false, 28 * s);
 			drawText(
 				game.ctx,
 				"Lvl " + hoveredTank.level + " (" + formatNumber(hoveredTank.xpProgress()) + "/" + formatNumber(hoveredTank.xpNeeded()) + ")",

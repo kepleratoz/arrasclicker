@@ -28,6 +28,24 @@ export class Vec2 {
 	clone() { return new Vec2(this.x, this.y); }
 }
 
+// Linearly interpolate between two #rrggbb colors. t is clamped to [0,1].
+export function lerpColor(a, b, t) {
+	const tt = Math.max(0, Math.min(1, t));
+	const ar = parseInt(a.slice(1, 3), 16);
+	const ag = parseInt(a.slice(3, 5), 16);
+	const ab = parseInt(a.slice(5, 7), 16);
+	const br = parseInt(b.slice(1, 3), 16);
+	const bg = parseInt(b.slice(3, 5), 16);
+	const bb = parseInt(b.slice(5, 7), 16);
+	const r = Math.round(ar + (br - ar) * tt);
+	const g = Math.round(ag + (bg - ag) * tt);
+	const bl = Math.round(ab + (bb - ab) * tt);
+	return "#" + r.toString(16).padStart(2, "0") + g.toString(16).padStart(2, "0") + bl.toString(16).padStart(2, "0");
+}
+
+// Per-frame regen amount, tuned to ~0.5 HP/sec at 60fps.
+export const REGEN_PER_FRAME = 0.5 / 60;
+
 const darkenCache = new Map();
 export function darken(hex, brightness = 0.6) {
 	const key = hex + brightness;

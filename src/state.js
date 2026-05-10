@@ -17,6 +17,7 @@ export const state = {
 	tankReloadUpgrades: 0,
 	tankDamageUpgrades: 0,
 	tankHealthUpgrades: 0,
+	tankHpUpgrades: 0,
 	tankSpeedUpgrades: 0,
 	tankBulletSpeedUpgrades: 0,
 	tankRarityCap: 4,

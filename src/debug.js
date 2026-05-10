@@ -82,6 +82,7 @@ const actionButtons = actions.map((a) => new Button(a.run, DEBUG_COLOR));
 const spawnModeBtn = new Button(() => setMode("spawn"), MODE_COLOR);
 const upgradeModeBtn = new Button(() => setMode("upgrade"), MODE_COLOR);
 const editionModeBtn = new Button(() => setMode("edition"), MODE_COLOR);
+const damageModeBtn = new Button(() => setMode("damage"), MODE_COLOR);
 const resetButton = new Button(handleReset, "#222222");
 let panelOpen = false;
 
@@ -115,6 +116,47 @@ function applyUpgradeKey(sel, n) {
 	while (sel.layers < n) sel.evolve();
 }
 
+function damageEntityUnderMouse() {
+	const s = screenScale();
+	// Shapes
+	const shape = shapeUnderMouse();
+	if (shape && !shape.isDead()) {
+		shape.health -= 1;
+		if (shape.health <= 0) shape.startDying();
+		return;
+	}
+	// Tanks
+	for (const t of game.tanks) {
+		if (t.isDead && t.isDead()) continue;
+		const dx = mouse.x - t.pos.x * s;
+		const dy = mouse.y - t.pos.y * s;
+		if (Math.sqrt(dx * dx + dy * dy) < t.size * s) { t.takeDamage(1); return; }
+	}
+	// Sanctuaries
+	for (const sg of game.sieges) {
+		const dx = mouse.x - sg.pos.x * s;
+		const dy = mouse.y - sg.pos.y * s;
+		if (Math.sqrt(dx * dx + dy * dy) < sg.size * s) { sg.takeDamage(1); return; }
+	}
+	// Bullets in flight (tanks + sanctuaries)
+	const bulletGroups = [];
+	for (const t of game.tanks) bulletGroups.push(t.bullets);
+	for (const sg of game.sieges) bulletGroups.push(sg.bullets);
+	for (const group of bulletGroups) {
+		for (const b of group) {
+			if (b.dying || b.dead) continue;
+			const dx = mouse.x - b.pos.x * s;
+			const dy = mouse.y - b.pos.y * s;
+			if (Math.sqrt(dx * dx + dy * dy) < b.size * s) { b.takeDamage(1); return; }
+		}
+	}
+}
+
+function handleDamageMode() {
+	if (keys.justPressed.has("Escape")) { game.debugMode = null; return; }
+	if (mouse.leftClick) damageEntityUnderMouse();
+}
+
 function applyEditionKey(sel, n) {
 	if (n > 6) return;
 	const rarity = n === 6 ? 4 : n - 2; // 1=common(-1), 2=shiny(0), 3=legendary(1), 4=shadow(2), 5=ultra(3), 6=ethereal(4)
@@ -131,6 +173,7 @@ export function updateDebug() {
 	if (game.debugMode === "spawn") handleSpawnMode();
 	else if (game.debugMode === "upgrade") handleSelectMode(applyUpgradeKey);
 	else if (game.debugMode === "edition") handleSelectMode(applyEditionKey);
+	else if (game.debugMode === "damage") handleDamageMode();
 }
 
 let resetClicks = 0;
@@ -168,6 +211,8 @@ export function renderDebugPanel(ctx) {
 		upgradeModeBtn.render(ctx, x, y, w, h, game.debugMode === "upgrade" ? "Upgrade Mode ✓" : "Upgrade Mode", false);
 		y += h + 4 * s;
 		editionModeBtn.render(ctx, x, y, w, h, game.debugMode === "edition" ? "Edition Mode ✓" : "Edition Mode", false);
+		y += h + 4 * s;
+		damageModeBtn.render(ctx, x, y, w, h, game.debugMode === "damage" ? "Damage Mode ✓" : "Damage Mode", false);
 		y += h + 12 * s;
 		resetButton.render(ctx, x, y, w, h, resetLabel(), false);
 	}
@@ -177,6 +222,8 @@ export function renderDebugPanel(ctx) {
 			? "SPAWN MODE — press 1-5 at cursor to spawn"
 			: game.debugMode === "upgrade"
 			? "UPGRADE MODE — click shape, press 1-5 (tier), ESC to cancel"
+			: game.debugMode === "damage"
+			? "DAMAGE MODE — click any entity to deal 1 damage, ESC to cancel"
 			: "EDITION MODE — click shape, press 1-6 (rarity, 6=Ethereal), ESC to cancel";
 		drawText(ctx, banner, game.width / 2, 60 * s, false, true, true, 22 * s);
 		if ((game.debugMode === "upgrade" || game.debugMode === "edition") && game.debugSelectedShape && !game.debugSelectedShape.isDead()) {
