@@ -41,13 +41,15 @@ export class Bullet {
 		this.pos = pos;
 		this.angle = angle;
 		this.isTrap = !!shootCfg.isTrap;
-		const upgradeSpeedMul = this.isTrap ? 1 + (tankBulletSpeedMul() - 1) * 0.5 : tankBulletSpeedMul();
+		const upgradeSpeedMul = shootCfg.ignoreUpgradeSpeed
+			? 1
+			: this.isTrap ? 1 + (tankBulletSpeedMul() - 1) * 0.5 : tankBulletSpeedMul();
 		this.velocity = Vec2.circle(angle, BULLET_SPEED * speedMul * shudderMul * upgradeSpeedMul);
 		this.size = sizeOverride ?? (tank.size * gunWidth * sizeMul) / 2;
 		this.tank = tank;
-		this.life = tankBulletLife() * rangeMul;
-		this.damage = tankBaseDamage() * damageMul;
-		this.health = tankBulletHealth() * healthMul;
+		this.life = tankBulletLife() * rangeMul * (this.isTrap ? 3 : 1);
+		this.damage = (shootCfg.ignoreUpgradeDamage ? 1 : tankBaseDamage()) * damageMul;
+		this.health = (shootCfg.ignoreUpgradeHealth ? 5 : tankBulletHealth()) * healthMul;
 		this.collisionCooldown = 0;
 		this.dying = 0;
 		this.dead = false;
@@ -103,7 +105,7 @@ export class Bullet {
 		ctx.globalAlpha = fade;
 		ctx.fillStyle = BODY_FILL;
 		ctx.strokeStyle = BODY_STROKE;
-		ctx.lineWidth = 2.5 * sc;
+		ctx.lineWidth = 4 * sc;
 		if (this.isTrap) {
 			drawTrap(ctx, this.pos.x * sc, this.pos.y * sc, this.size * sizeMul * sc, this.angle);
 		} else {
@@ -115,28 +117,6 @@ export class Bullet {
 	}
 }
 
-function drawRoundedQuad(ctx, points, r) {
-	const n = points.length;
-	ctx.beginPath();
-	for (let i = 0; i < n; i++) {
-		const [cx, cy] = points[i];
-		const [px, py] = points[(i - 1 + n) % n];
-		const [nx, ny] = points[(i + 1) % n];
-		const v1x = px - cx, v1y = py - cy;
-		const v2x = nx - cx, v2y = ny - cy;
-		const l1 = Math.sqrt(v1x * v1x + v1y * v1y) || 1;
-		const l2 = Math.sqrt(v2x * v2x + v2y * v2y) || 1;
-		const radius = Math.min(r, l1 / 2, l2 / 2);
-		const ax = cx + (v1x / l1) * radius;
-		const ay = cy + (v1y / l1) * radius;
-		const bx = cx + (v2x / l2) * radius;
-		const by = cy + (v2y / l2) * radius;
-		if (i === 0) ctx.moveTo(ax, ay);
-		else ctx.lineTo(ax, ay);
-		ctx.arcTo(cx, cy, bx, by, radius);
-	}
-	ctx.closePath();
-}
 
 function drawTrap(ctx, x, y, radius, angle) {
 	const sides = 3;
@@ -342,6 +322,55 @@ export class Tank {
 	render(ctx) { renderTank(ctx, this, this.pos.x, this.pos.y, this.angle, this.size, true); }
 }
 
+function drawTankShape(ctx, def, gunStates, cx, cy, angle, sizePx, lineWidth) {
+	const cosA = Math.cos(angle);
+	const sinA = Math.sin(angle);
+	for (let i = 0; i < def.guns.length; ++i) {
+		const gun = def.guns[i];
+		const gs = gunStates ? gunStates[i] : null;
+		const mountX = cx + (gun.x * cosA - gun.y * sinA) * sizePx;
+		const mountY = cy + (gun.x * sinA + gun.y * cosA) * sizePx;
+		const barrelDir = angle + (gun.angle ?? 0);
+		const aspect = gun.aspect ?? 1;
+		const halfW = (gun.width / 2) * sizePx;
+		const h0 = aspect > 0 ? halfW * aspect : halfW;
+		const h1 = aspect > 0 ? halfW : halfW * -aspect;
+		const recoilOffset = (gs?.gunPosition ?? 0) * sizePx;
+		const barrelLen = gun.length * sizePx;
+		ctx.save();
+		ctx.translate(mountX, mountY);
+		ctx.rotate(barrelDir);
+		ctx.fillStyle = BARREL_FILL;
+		ctx.strokeStyle = BARREL_STROKE;
+		ctx.lineWidth = lineWidth;
+		ctx.lineJoin = "round";
+		const pts = gun.outline
+			? gun.outline.map(([px, py]) => [px * sizePx - recoilOffset, py * sizePx])
+			: [
+				[-recoilOffset, h1],
+				[barrelLen - recoilOffset, h0],
+				[barrelLen - recoilOffset, -h0],
+				[-recoilOffset, -h1],
+			];
+		ctx.beginPath();
+		for (let p = 0; p < pts.length; p++) {
+			if (p === 0) ctx.moveTo(pts[p][0], pts[p][1]);
+			else ctx.lineTo(pts[p][0], pts[p][1]);
+		}
+		ctx.closePath();
+		ctx.fill();
+		ctx.stroke();
+		ctx.restore();
+	}
+	ctx.fillStyle = BODY_FILL;
+	ctx.strokeStyle = BODY_STROKE;
+	ctx.lineWidth = lineWidth;
+	ctx.beginPath();
+	ctx.arc(cx, cy, sizePx, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.stroke();
+}
+
 function renderTank(ctx, tank, posX, posY, angle, size, applyRoomFov) {
 	const sc = applyRoomFov ? game.scale * game.room.fov : game.scale;
 	const cx = posX * sc;
@@ -350,50 +379,7 @@ function renderTank(ctx, tank, posX, posY, angle, size, applyRoomFov) {
 	if (applyRoomFov) {
 		for (const b of tank.bullets) b.render(ctx);
 	}
-	const cosA = Math.cos(angle);
-	const sinA = Math.sin(angle);
-	for (let i = 0; i < def.guns.length; ++i) {
-		const gun = def.guns[i];
-		const gs = tank.gunStates[i];
-		const mountX = cx + (gun.x * cosA - gun.y * sinA) * size * sc;
-		const mountY = cy + (gun.x * sinA + gun.y * cosA) * size * sc;
-		const barrelDir = angle + (gun.angle ?? 0);
-		const aspect = gun.aspect ?? 1;
-		const halfW = (gun.width / 2) * size * sc;
-		const h0 = aspect > 0 ? halfW * aspect : halfW;
-		const h1 = aspect > 0 ? halfW : halfW * -aspect;
-		const recoilOffset = (gs?.gunPosition ?? 0) * size * sc;
-		const barrelLen = gun.length * size * sc;
-		ctx.save();
-		ctx.translate(mountX, mountY);
-		ctx.rotate(barrelDir);
-		ctx.fillStyle = BARREL_FILL;
-		ctx.strokeStyle = BARREL_STROKE;
-		ctx.lineWidth = 2.5 * sc;
-		if (gun.outline) {
-			const sizeSc = size * sc;
-			const pts = gun.outline.map(([px, py]) => [px * sizeSc - recoilOffset, py * sizeSc]);
-			drawRoundedQuad(ctx, pts, gun.width * 0.5 * sizeSc * 0.18);
-		} else {
-			const r = Math.min(h0, h1, barrelLen) * 0.18;
-			drawRoundedQuad(ctx, [
-				[-recoilOffset, h1],
-				[barrelLen - recoilOffset, h0],
-				[barrelLen - recoilOffset, -h0],
-				[-recoilOffset, -h1],
-			], r);
-		}
-		ctx.fill();
-		ctx.stroke();
-		ctx.restore();
-	}
-	ctx.fillStyle = BODY_FILL;
-	ctx.strokeStyle = BODY_STROKE;
-	ctx.lineWidth = 2.5 * sc;
-	ctx.beginPath();
-	ctx.arc(cx, cy, size * sc, 0, Math.PI * 2);
-	ctx.fill();
-	ctx.stroke();
+	drawTankShape(ctx, def, tank.gunStates, cx, cy, angle, size * sc, 4 * sc);
 	if (applyRoomFov) {
 		if (game.controlledTank === tank) {
 			ctx.strokeStyle = "#ffffff";
@@ -421,50 +407,7 @@ function renderTank(ctx, tank, posX, posY, angle, size, applyRoomFov) {
 export function renderTankPreview(ctx, tank, x, y, size, angleOverride) {
 	const angle = angleOverride ?? -Math.PI / 2;
 	const def = TANK_DEFS[tank.defKey];
-	const stroke = size * (2.5 / 12);
-	ctx.save();
-	ctx.translate(x, y);
-	ctx.rotate(angle);
-	for (let i = 0; i < def.guns.length; ++i) {
-		const gun = def.guns[i];
-		const mountX = gun.x * size;
-		const mountY = gun.y * size;
-		const aspect = gun.aspect ?? 1;
-		const halfW = (gun.width / 2) * size;
-		const h0 = aspect > 0 ? halfW * aspect : halfW;
-		const h1 = aspect > 0 ? halfW : halfW * -aspect;
-		const barrelLen = gun.length * size;
-		ctx.save();
-		ctx.translate(mountX, mountY);
-		ctx.rotate(gun.angle ?? 0);
-		ctx.fillStyle = BARREL_FILL;
-		ctx.strokeStyle = BARREL_STROKE;
-		ctx.lineWidth = stroke;
-		ctx.lineJoin = "round";
-		if (gun.outline) {
-			const pts = gun.outline.map(([px, py]) => [px * size, py * size]);
-			drawRoundedQuad(ctx, pts, gun.width * 0.5 * size * 0.18);
-		} else {
-			const r = Math.min(h0, h1, barrelLen) * 0.18;
-			drawRoundedQuad(ctx, [
-				[0, h1],
-				[barrelLen, h0],
-				[barrelLen, -h0],
-				[0, -h1],
-			], r);
-		}
-		ctx.fill();
-		ctx.stroke();
-		ctx.restore();
-	}
-	ctx.fillStyle = BODY_FILL;
-	ctx.strokeStyle = BODY_STROKE;
-	ctx.lineWidth = stroke;
-	ctx.beginPath();
-	ctx.arc(0, 0, size, 0, Math.PI * 2);
-	ctx.fill();
-	ctx.stroke();
-	ctx.restore();
+	drawTankShape(ctx, def, null, x, y, angle, size, size * (4 / 12));
 }
 
 export function tankUnderMouse() {
