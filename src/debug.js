@@ -2,7 +2,7 @@ import { state } from "./state.js";
 import { Button } from "./button.js";
 import { game } from "./game.js";
 import { mouse, keys } from "./input.js";
-import { Shape, makeShapeData, TYPE_NAMES } from "./shape.js";
+import { Shape, Sentry, makeShapeData, TYPE_NAMES } from "./shape.js";
 import { resetGame } from "./save.js";
 import { Vec2 } from "./utils.js";
 import { drawText } from "./render.js";
@@ -75,6 +75,12 @@ const actions = [
 		label: "Max " + k.name + " Upgrades",
 		run: () => { maxShapeUpgrades(k.index); if (k.unlockKey) state[k.unlockKey] = true; },
 	})),
+	{ label: () => "Shape Spawning: " + (state.shapeSpawningEnabled ? "ON" : "OFF"),
+		run: () => { state.shapeSpawningEnabled = !state.shapeSpawningEnabled; } },
+	{ label: "Clear All Shapes",
+		run: () => { game.shapes.length = 0; } },
+	{ label: "Clear All Polygons",
+		run: () => { for (let i = game.shapes.length - 1; i >= 0; --i) if (!game.shapes[i].isSentry) game.shapes.splice(i, 1); } },
 ];
 
 const toggleButton = new Button(() => { panelOpen = !panelOpen; }, DEBUG_COLOR);
@@ -91,6 +97,9 @@ function handleSpawnMode() {
 		if (keys.justPressed.has(NUMBER_CODES[i])) {
 			spawnAt(i, worldFromMouse());
 		}
+	}
+	if (keys.justPressed.has("Digit9")) {
+		game.shapes.push(new Sentry(worldFromMouse()));
 	}
 }
 
@@ -203,7 +212,8 @@ export function renderDebugPanel(ctx) {
 	if (panelOpen) {
 		for (let i = 0; i < actions.length; ++i) {
 			y += h + 4 * s;
-			actionButtons[i].render(ctx, x, y, w, h, actions[i].label, false);
+			const label = typeof actions[i].label === "function" ? actions[i].label() : actions[i].label;
+			actionButtons[i].render(ctx, x, y, w, h, label, false);
 		}
 		y += h + 4 * s;
 		spawnModeBtn.render(ctx, x, y, w, h, game.debugMode === "spawn" ? "Spawn Mode ✓" : "Spawn Mode", false);
@@ -219,7 +229,7 @@ export function renderDebugPanel(ctx) {
 
 	if (game.debugMode) {
 		const banner = game.debugMode === "spawn"
-			? "SPAWN MODE — press 1-5 at cursor to spawn"
+			? "SPAWN MODE — press 1-5 to spawn shapes, 9 to spawn a Sentry"
 			: game.debugMode === "upgrade"
 			? "UPGRADE MODE — click shape, press 1-5 (tier), ESC to cancel"
 			: game.debugMode === "damage"

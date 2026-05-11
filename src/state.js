@@ -18,6 +18,8 @@ export const state = {
 	tanks: [],
 	shapeDeathAnimEnabled: true,
 	bulletDeathAnimEnabled: true,
+	damageBlendEnabled: false,
+	shapeSpawningEnabled: true,
 	rarityCap: 0,
 	shapesSpawnInterval: 2000,
 	shapeTypeBuff: 1,

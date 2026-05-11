@@ -1,8 +1,9 @@
 import { state } from "./state.js";
-import { Vec2, darken, colors, formatNumber, REGEN_PER_FRAME } from "./utils.js";
+import { Vec2, darken, colors, formatNumber, REGEN_PER_FRAME, lerpColor } from "./utils.js";
 import { mouse } from "./input.js";
-import { drawPolygon } from "./render.js";
+import { drawPolygon, drawHealthBar } from "./render.js";
 import { game } from "./game.js";
+import { Bullet } from "./tank.js";
 
 const LOG5 = Math.log(5);
 const DEATH_FRAMES = 18; // ~300ms at 60fps
@@ -22,6 +23,13 @@ const ETHEREAL_VISIBLE_DIST = 100;
 const TYPE_SIZES = [5, 20, 20, 26, 28, 56, 112, 224];
 const TYPE_SIDES = [0, 4, 3, 5, 6, 7, 8, 9];
 const TYPE_BASE_SCORES = [1, 200, 40000, 8e6, 32e8, 32e10, 64e12, 128e14];
+// OSA polygon HP, derived from server/lib/definitions/groups/food.js and constants.js
+// (basePolygonHealth = 2). Egg=0.5×base, Square=1×, Triangle=3×, Pentagon=10×, Hexagon=20×.
+// Larger polygons extrapolated. Multiplied by per-rarity HP factor below.
+const TYPE_BASE_HEALTH = [1, 2, 6, 20, 40, 80, 160, 320];
+// OSA polygon DAMAGE (food.js × basePolygonDamage = 1). Egg=0, Square=1, Triangle=1,
+// Pentagon=1.5, Hexagon=3. Larger polygons extrapolated.
+const TYPE_BASE_DAMAGE = [0, 1, 1, 1.5, 3, 4, 5, 6];
 
 export function makeShapeData(type, rarity, layers) {
 	const color = rarity >= 0 ? RARITY_COLORS[rarity] : TYPE_COLORS[type];
@@ -62,6 +70,8 @@ export class Shape {
 		this.rarity = -1;
 		this.health = 1;
 		this.dying = 0;
+		this.damageType = 1;     // OSA "food" tag: tank bullets with buffVsFood get ×3 damage.
+		this.damageBlend = 0;    // OSA-style red-flash on damage; decays per frame.
 	}
 	startDying() {
 		if (this.dying) return;
@@ -99,8 +109,11 @@ export class Shape {
 			: this.rarity === 1 ? 4
 			: this.rarity === 0 ? 2
 			: 1;
-		this.maxHealth = (data.type + 1) * rarityHealth;
+		this.maxHealth = TYPE_BASE_HEALTH[this.type] * rarityHealth;
 		this.health = this.maxHealth;
+		this.damage = TYPE_BASE_DAMAGE[this.type];   // OSA-style body damage; consumed by Bullet collisions.
+		this.penetration = 1;                        // baseline pen for shapes (no upgrade track).
+		this.resist = 0;                             // shapes have RESIST = 0 and brst is small enough that resist clamps to 0.
 		const sides = Math.max(3, this.sides);
 		const cosFactor = Math.cos(Math.PI / sides);
 		const triangleAdjust = this.sides === 3 && this.layers > 1 ? 2 / (2 + (this.layers - 1)) : 1;
@@ -136,6 +149,8 @@ export class Shape {
 		}
 		if (this.layers < state.layersCaps[this.type] && performance.now() > this.evoTime) this.evolve();
 		if (this.health < this.maxHealth) this.health = Math.min(this.maxHealth, this.health + REGEN_PER_FRAME);
+		this.damageBlend *= 0.85;
+		if (this.damageBlend < 0.01) this.damageBlend = 0;
 		this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
 		if ((mouse.leftClick || mouse.right) && !game.debugMode && !game.controlledTank) {
 			const screenScale = game.scale * game.room.fov;
@@ -200,6 +215,12 @@ export class Shape {
 			ctx.fillStyle = darken(this.fillStyle, colorScale);
 			ctx.strokeStyle = darken(this.strokeStyle, colorScale);
 		}
+		// OSA-style red hit-flash on damage. Skip for rainbow shapes (hsl() colors don't parse).
+		const blend = state.damageBlendEnabled ? (this.damageBlend ?? 0) * 0.5 : 0;
+		if (blend > 0 && this.rarity !== 3) {
+			ctx.fillStyle = lerpColor(ctx.fillStyle, "#ff5050", blend);
+			ctx.strokeStyle = lerpColor(ctx.strokeStyle, "#7a1a1a", blend);
+		}
 		ctx.lineWidth = 3 * game.scale * game.room.fov;
 		for (let i = 0; i < this.layers; ++i) {
 			drawPolygon(
@@ -229,5 +250,243 @@ export class Shape {
 	}
 	isFullyDead() {
 		return this.dying > DEATH_FRAMES;
+	}
+}
+
+// ---------- Sentry ----------
+// A large enemy triangle (~Beta Triangle size) with a single auto-cannon turret that
+// targets and shoots tanks. Stats are baked at MAX (max upgrade levels for everything
+// except shield, which is zero), 100 HP, no shield, no shield regen.
+// OSA Class.sentry: SIZE = 10, varies-in-size with level. We use 15 as our base so
+// it sits between a basic tank (12) and a max-level tank (24), then scale up with
+// level via the same `1 + level/42` curve tanks use.
+const SENTRY_BASE_SIZE = 20;
+const SENTRY_SPAWN_LEVEL = 30;
+const SENTRY_SIZE = SENTRY_BASE_SIZE * (1 + Math.min(42, SENTRY_SPAWN_LEVEL) / 42);
+const SENTRY_FILL = "#ef99c3";       // OSA "pink".
+const SENTRY_HEALTH = 100;
+const SENTRY_RANGE = 1000;
+const SENTRY_TURN_RATE = 0.08;
+// OSA Class.sentry BODY: { DAMAGE: base.DAMAGE = 3, SPEED: 0.5·base.SPEED, HEALTH: 0.3·base.HEALTH }.
+const SENTRY_BODY_DAMAGE = 3;
+const SENTRY_MOVE_SPEED = 0.6;       // ≈ 0.5 × our BASE_TANK_SPEED (1.2), mirroring OSA's 0.5·base.SPEED.
+const SENTRY_ORBIT_RADIUS = 320;     // world units from the chosen sanctuary's center.
+const SENTRY_RADIAL_CORRECTION = 0.04;  // strength of radial pull-toward-orbit-radius.
+const SENTRY_RECOIL_IMPULSE = 0.18;
+const SENTRY_RECOIL_SPRING = 0.2;
+const SENTRY_RECOIL_DAMP = 0.5;
+// MAX-tier upgrade levels for the auto-cannon's bullet stats; shield upgrades stay 0.
+const SENTRY_MAX_UPGRADES = {
+	hp: 10, reload: 5, damage: 5, bulletHealth: 5, bulletSpeed: 5, speed: 3,
+	shieldCap: 0, shieldRegen: 0,
+};
+const SENTRY_SHOOT_INTERVAL_MS = 600 * Math.pow(0.9, SENTRY_MAX_UPGRADES.reload);
+const SENTRY_SHOOT_CFG = {
+	targetsTanks: true,
+	damage: 2,                       // fixed 2 damage (ignoreUpgradeDamage uses base 1).
+	health: 0.4,                     // fixed 2 health (ignoreUpgradeHealth uses base 5).
+	ignoreUpgradeDamage: true,
+	ignoreUpgradeHealth: true,
+};
+// OSA sentryGun = makeAuto("sentry", "Sentry", { type: "megaAutoTankGun", size: 12 }).
+// Turret SIZE 12 on sentry SIZE 10 → bound.size = 12/20 = 0.6, turret radius = 3
+// (sentry size 10 × bound 0.6 ÷ 2). So turret/sentry radius ratio = 0.3.
+// megaAutoTankGun's gun POSITION = [22, 14, 1, 0, 0, 0, 0] → length 2.2, width 1.4
+// in turret-radii units.
+const SENTRY_TURRET_BODY = 0.3;      // turret body radius, in sentry-radii units (OSA-derived).
+const SENTRY_BARREL_LEN = 2.2;       // barrel length, in turret-radii units (OSA megaAutoTankGun).
+const SENTRY_BARREL_W = 1.4;         // barrel width, in turret-radii units (OSA megaAutoTankGun).
+const BARREL_FILL = "#b1b3bc";
+const BARREL_STROKE = "#646568";
+
+export class Sentry extends Shape {
+	constructor(pos) {
+		super(pos);
+		this.size = SENTRY_SIZE;
+		this.drawSize = SENTRY_SIZE;
+		this.maxHealth = SENTRY_HEALTH;
+		this.health = SENTRY_HEALTH;
+		this.maxShield = 0;
+		this.shield = 0;
+		this.fillStyle = SENTRY_FILL;
+		this.strokeStyle = darken(this.fillStyle);
+		this.sides = 3;
+		this.type = 2;          // triangle (for tank targeting compatibility)
+		this.rarity = -1;
+		this.layers = 1;
+		this.score = 0;
+		this.upgrades = { ...SENTRY_MAX_UPGRADES };
+		this.level = SENTRY_SPAWN_LEVEL;
+		this.bullets = [];
+		this.turretAngle = 0;
+		this.shootTime = 0;
+		this.gunState = { gunPosition: 0, gunMotion: 0 };
+		this.velocity = new Vec2();
+		this.orbitDir = Math.random() < 0.5 ? 1 : -1;   // CW or CCW around the sanctuary.
+		this.isSentry = true;   // marker for Tank distance-keeping logic.
+		this.damageType = 0;    // not food — buffVsFood doesn't apply to sentries.
+		this.damage = SENTRY_BODY_DAMAGE;  // body damage (when bullets bump into the triangle).
+		this.penetration = 2;   // sentries are tougher to chip through than basic shapes.
+		// Sentry has all skills maxed; brst = 0.3·(0.5·atk + 0.5·hlt + rgn) ≈ 8.25, so
+		// resist = 1 - 1/(0 + 8.25) ≈ 0.879 — heavy damage reduction vs un-upgraded tanks.
+		this.resist = 1 - 1 / 8.25;
+	}
+	startDying() {
+		if (this.dying) return;
+		this.dying = state.shapeDeathAnimEnabled ? 1 : DEATH_FRAMES + 1;
+	}
+	takeDamage(n) {
+		if (this.isDead()) return;
+		this.health = Math.max(0, this.health - n);
+		this.damageBlend = 1;
+		if (this.health <= 0) this.startDying();
+	}
+	update() {
+		if (this.dying) {
+			this.dying += 1;
+			this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
+			for (let i = this.bullets.length - 1; i >= 0; --i) {
+				this.bullets[i].update();
+				if (this.bullets[i].dead) this.bullets.splice(i, 1);
+			}
+			return;
+		}
+		if (this.health < this.maxHealth) {
+			this.health = Math.min(this.maxHealth, this.health + REGEN_PER_FRAME);
+		}
+		this.damageBlend *= 0.85;
+		if (this.damageBlend < 0.01) this.damageBlend = 0;
+		this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
+		// Click damage (left-click on the body), matching Shape behavior.
+		if (mouse.leftClick && !game.debugMode && !game.controlledTank) {
+			const sScale = game.scale * game.room.fov;
+			const dx = mouse.x - this.pos.x * sScale;
+			const dy = mouse.y - this.pos.y * sScale;
+			const overlap = 10 + this.size * sScale - Math.sqrt(dx * dx + dy * dy);
+			if (overlap > 0) {
+				this.health -= 1 + (state.clickDamageUpgrades || 0);
+				this.damageBlend = 1;
+				if (this.health <= 0) this.startDying();
+			}
+		}
+		// Movement: orbit the nearest sanctuary at SENTRY_ORBIT_RADIUS, picked once per frame.
+		let homeSanctuary = null;
+		let homeDistSq = Infinity;
+		for (const sg of game.sieges) {
+			const dx = sg.pos.x - this.pos.x;
+			const dy = sg.pos.y - this.pos.y;
+			const d = dx * dx + dy * dy;
+			if (d < homeDistSq) { homeDistSq = d; homeSanctuary = sg; }
+		}
+		if (homeSanctuary) {
+			const dx = this.pos.x - homeSanctuary.pos.x;
+			const dy = this.pos.y - homeSanctuary.pos.y;
+			const dist = Math.max(0.001, Math.sqrt(dx * dx + dy * dy));
+			const radialError = dist - SENTRY_ORBIT_RADIUS;
+			const radX = -dx / dist;            // points toward sanctuary.
+			const radY = -dy / dist;
+			const tanX = -dy / dist * this.orbitDir;   // tangent (signed by orbit direction).
+			const tanY = dx / dist * this.orbitDir;
+			this.velocity.x = tanX * SENTRY_MOVE_SPEED + radX * radialError * SENTRY_RADIAL_CORRECTION;
+			this.velocity.y = tanY * SENTRY_MOVE_SPEED + radY * radialError * SENTRY_RADIAL_CORRECTION;
+			this.pos.add(this.velocity);
+		}
+		// Auto-cannon target: nearest live tank in range, falling back to the chosen sanctuary.
+		let nearest = null;
+		let bestSq = SENTRY_RANGE * SENTRY_RANGE;
+		for (const t of game.tanks) {
+			if (t.isDead && t.isDead()) continue;
+			const dx = t.pos.x - this.pos.x;
+			const dy = t.pos.y - this.pos.y;
+			const d = dx * dx + dy * dy;
+			if (d < bestSq) { bestSq = d; nearest = t; }
+		}
+		if (!nearest && homeSanctuary) nearest = homeSanctuary;
+		if (nearest) {
+			const dx = nearest.pos.x - this.pos.x;
+			const dy = nearest.pos.y - this.pos.y;
+			const target = Math.atan2(dy, dx);
+			let delta = target - this.turretAngle;
+			while (delta > Math.PI) delta -= Math.PI * 2;
+			while (delta < -Math.PI) delta += Math.PI * 2;
+			this.turretAngle += Math.max(-SENTRY_TURN_RATE, Math.min(SENTRY_TURN_RATE, delta));
+			const now = performance.now();
+			if (now > this.shootTime) {
+				const cosA = Math.cos(this.turretAngle);
+				const sinA = Math.sin(this.turretAngle);
+				const tipDist = SENTRY_BARREL_LEN * SENTRY_TURRET_BODY * this.size;
+				const tipX = this.pos.x + cosA * tipDist;
+				const tipY = this.pos.y + sinA * tipDist;
+				this.bullets.push(new Bullet(new Vec2(tipX, tipY), this.turretAngle, this, SENTRY_SHOOT_CFG, SENTRY_BARREL_W * SENTRY_TURRET_BODY, 1));
+				this.shootTime = now + SENTRY_SHOOT_INTERVAL_MS;
+				this.gunState.gunMotion += SENTRY_RECOIL_IMPULSE;
+			}
+		}
+		this.gunState.gunMotion -= SENTRY_RECOIL_SPRING * this.gunState.gunPosition;
+		this.gunState.gunPosition += this.gunState.gunMotion;
+		if (this.gunState.gunPosition < 0) { this.gunState.gunPosition = 0; this.gunState.gunMotion = -this.gunState.gunMotion; }
+		if (this.gunState.gunMotion > 0) this.gunState.gunMotion *= SENTRY_RECOIL_DAMP;
+		for (let i = this.bullets.length - 1; i >= 0; --i) {
+			this.bullets[i].update();
+			if (this.bullets[i].dead) this.bullets.splice(i, 1);
+		}
+	}
+	render(ctx) {
+		const sc = game.scale * game.room.fov;
+		const cx = this.pos.x * sc;
+		const cy = this.pos.y * sc;
+		const fade = this.dying ? Math.max(0, 1 - this.dying / DEATH_FRAMES) : 1;
+		const sizeMul = 1 + 0.5 * (1 - fade);
+		// Bullets first (under the body).
+		for (const b of this.bullets) b.render(ctx);
+		ctx.globalAlpha = fade;
+		// Triangle body, with OSA-style red hit-flash if recently damaged.
+		const blend = state.damageBlendEnabled ? (this.damageBlend ?? 0) * 0.5 : 0;
+		ctx.fillStyle = blend > 0 ? lerpColor(this.fillStyle, "#ff5050", blend) : this.fillStyle;
+		ctx.strokeStyle = blend > 0 ? lerpColor(this.strokeStyle, "#7a1a1a", blend) : this.strokeStyle;
+		ctx.lineWidth = 4 * sc;
+		ctx.lineJoin = "round";
+		ctx.beginPath();
+		const r = this.drawSize * sizeMul * sc;
+		for (let i = 0; i < 3; i++) {
+			const a = -Math.PI / 2 + (i / 3) * Math.PI * 2;
+			const x = cx + Math.cos(a) * r;
+			const y = cy + Math.sin(a) * r;
+			if (i === 0) ctx.moveTo(x, y);
+			else ctx.lineTo(x, y);
+		}
+		ctx.closePath();
+		ctx.fill();
+		ctx.stroke();
+		// Auto cannon: barrel + small turret body. Barrel/width are sized relative to the
+		// turret-body radius (Basic-tank style), not the whole sentry — keeps proportions sane.
+		const turretR = SENTRY_TURRET_BODY * this.size * sc;
+		const barrelLen = SENTRY_BARREL_LEN * turretR;
+		const barrelHalfW = (SENTRY_BARREL_W / 2) * turretR;
+		const recoil = this.gunState.gunPosition * turretR;
+		ctx.save();
+		ctx.translate(cx, cy);
+		ctx.rotate(this.turretAngle);
+		ctx.fillStyle = BARREL_FILL;
+		ctx.strokeStyle = BARREL_STROKE;
+		ctx.lineWidth = 4 * sc;
+		ctx.lineJoin = "round";
+		ctx.beginPath();
+		ctx.moveTo(-recoil, -barrelHalfW);
+		ctx.lineTo(barrelLen - recoil, -barrelHalfW);
+		ctx.lineTo(barrelLen - recoil, barrelHalfW);
+		ctx.lineTo(-recoil, barrelHalfW);
+		ctx.closePath();
+		ctx.fill();
+		ctx.stroke();
+		ctx.beginPath();
+		ctx.arc(0, 0, turretR, 0, Math.PI * 2);
+		ctx.fill();
+		ctx.stroke();
+		ctx.restore();
+		ctx.globalAlpha = 1;
+		if (!this.dying) {
+			drawHealthBar(ctx, cx, cy, r, this.health, this.maxHealth, game.scale);
+		}
 	}
 }

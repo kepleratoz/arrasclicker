@@ -247,13 +247,16 @@ function renderTankInfoPanel(tank) {
 	const { yTop, lineH, subH, x, bars } = layout;
 	const isDead = tank.isDead && tank.isDead();
 	const hp = Math.max(0, Math.floor(tank.health));
-	const hpLabel = " - " + hp + "/" + tank.maxHealth + " HP" + (isDead ? ", DEAD" : ", +0.5 HP/s");
+	const maxHp = Math.round(tank.maxHealth);
+	const shieldFull = (tank.maxShield ?? 0) > 0 && (tank.shield ?? 0) >= tank.maxShield;
+	const hpRegenLabel = isDead ? ", DEAD" : (shieldFull ? ", +25 HP/s" : ", heals when shielded");
+	const hpLabel = " - " + hp + "/" + maxHp + " HP" + hpRegenLabel;
 	drawText(ctx, tank.classification + hpLabel, x, yTop, false, true, false, 28 * s);
-	drawText(
-		ctx,
-		"Lvl " + tank.level + " (" + formatNumber(tank.xpProgress()) + "/" + formatNumber(tank.xpNeeded()) + ")",
-		x, yTop + lineH, false, true, false, 24 * s,
-	);
+	const sh = Math.max(0, Math.floor(tank.shield ?? 0));
+	const maxSh = Math.round(tank.maxShield ?? 0);
+	const shieldLabel = "Shield " + sh + "/" + maxSh;
+	const levelLabel = "Lvl " + tank.level + " (" + formatNumber(tank.xpProgress()) + "/" + formatNumber(tank.xpNeeded()) + ")";
+	drawText(ctx, levelLabel + "  |  " + shieldLabel, x, yTop + lineH, false, true, false, 24 * s);
 	const desired = bulkBuyQuantity();
 	for (const b of bars) {
 		const level = tank.upgrades?.[b.spec.key] ?? 0;
@@ -319,11 +322,12 @@ const loadButton = new Button(() => {
 }, "#db9146");
 const shapeAnimButton = new Button(() => { state.shapeDeathAnimEnabled = !state.shapeDeathAnimEnabled; }, "#efc74b");
 const bulletAnimButton = new Button(() => { state.bulletDeathAnimEnabled = !state.bulletDeathAnimEnabled; }, "#58b0d0");
+const damageBlendButton = new Button(() => { state.damageBlendEnabled = !state.damageBlendEnabled; }, "#e03e41");
 
 let nextSpawnTime = 0;
 
 function frame(now) {
-	while (game.shapes.length < state.shapesCap && now > nextSpawnTime) {
+	while (state.shapeSpawningEnabled && game.shapes.length < state.shapesCap && now > nextSpawnTime) {
 		game.shapes.push(Shape.random());
 		if (game.shapes.length === state.shapesCap) nextSpawnTime = now;
 		nextSpawnTime += (0.5 + Math.random() * 0.5) * Math.max(500, state.shapesSpawnInterval);
@@ -337,6 +341,7 @@ function frame(now) {
 		loadButton.render(game.ctx, 106 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Load", false);
 		shapeAnimButton.render(game.ctx, 206 * game.scale, 6 * game.scale, 160 * game.scale, 50 * game.scale, "Shape FX: " + (state.shapeDeathAnimEnabled ? "ON" : "OFF"), false);
 		bulletAnimButton.render(game.ctx, 366 * game.scale, 6 * game.scale, 160 * game.scale, 50 * game.scale, "Bullet FX: " + (state.bulletDeathAnimEnabled ? "ON" : "OFF"), false);
+		damageBlendButton.render(game.ctx, 526 * game.scale, 6 * game.scale, 160 * game.scale, 50 * game.scale, "Damage FX: " + (state.damageBlendEnabled ? "ON" : "OFF"), false);
 		renderDebugPanel(game.ctx);
 		renderTankUpgradePanel();
 		const hoveredTank = game.selectedTank;

@@ -46,6 +46,20 @@ export function lerpColor(a, b, t) {
 // Per-frame regen amount, tuned to ~0.5 HP/sec at 60fps.
 export const REGEN_PER_FRAME = 0.5 / 60;
 
+// OSA's skill-to-stat conversion: a logarithmic curve normalized by the cap, then
+// passed through a linear/inverse `apply` function. See server/game/entities/skills.js.
+//   curve:  log(4·level/cap + 1) / 1.6   →  ranges roughly 0 (no upgrade) to ~1.006 (max).
+//   apply:  for non-negative attrib, returns f·attrib + 1.
+//           for negative attrib (used for inverse curves), returns 1/(1 - attrib·f).
+// Together they make most upgrades scale ~1× → (f+1)× from no-upgrade to max.
+export function osaCurve(level, cap) {
+	if (cap <= 0 || level <= 0) return 0;
+	return Math.log(4 * level / cap + 1) / 1.6;
+}
+export function osaApply(f, x) {
+	return x < 0 ? 1 / (1 - x * f) : f * x + 1;
+}
+
 const darkenCache = new Map();
 export function darken(hex, brightness = 0.6) {
 	const key = hex + brightness;

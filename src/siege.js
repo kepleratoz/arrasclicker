@@ -1,4 +1,5 @@
-import { Vec2, REGEN_PER_FRAME } from "./utils.js";
+import { Vec2, REGEN_PER_FRAME, lerpColor } from "./utils.js";
+import { state } from "./state.js";
 import { game } from "./game.js";
 import { Bullet } from "./tank.js";
 import { drawHealthBar } from "./render.js";
@@ -9,7 +10,8 @@ const BODY_SIZE = 72;
 const MAX_TANK_SIZE = 24;            // Trapper barrels are sized as if mounted on a max-level tank.
 const BARREL_TANK_SIZE = MAX_TANK_SIZE * 1.5;  // Sanctuary trap launchers render 1.5× a max tank's.
 const BARREL_COUNT = 3;
-const SPIN_RATE = 0.012;
+// OSA Class.sanctuary FACING_TYPE: ["spin", { speed: 0.025 }]. Doubled from our previous 0.012.
+const SPIN_RATE = 0.024;
 const SHOOT_INTERVAL = 1000;         // 1 second between volleys
 const RECOIL_IMPULSE = 0.3;
 const RECOIL_SPRING = 0.2;
@@ -104,6 +106,13 @@ export class Siege {
 		this.size = BODY_SIZE;
 		this.maxHealth = 300;
 		this.health = 300;
+		this.damageBlend = 0;        // OSA-style red hit-flash; gated by state.damageBlendEnabled.
+		// OSA collision fields so incoming bullets can compute the damage formula against us.
+		// OSA Class.sanctuary BODY: { HEALTH: 1280, DAMAGE: 5.5, SHIELD: ... }.
+		this.penetration = 1;
+		this.resist = 0;
+		this.damage = 5.5;           // chips bullets that ram into the sanctuary.
+		this.damageType = 0;         // not food.
 		this.bullets = [];
 		this.shootTime = 0;
 		this.gunStates = Array.from({ length: BARREL_COUNT }, () => ({ position: 0, motion: 0 }));
@@ -143,6 +152,8 @@ export class Siege {
 		}
 		this.updateHealerTurret(now);
 		if (this.health < this.maxHealth) this.health = Math.min(this.maxHealth, this.health + REGEN_PER_FRAME);
+		this.damageBlend *= 0.85;
+		if (this.damageBlend < 0.01) this.damageBlend = 0;
 		// Per-barrel recoil spring
 		for (const gs of this.gunStates) {
 			gs.motion -= RECOIL_SPRING * gs.position;
@@ -168,6 +179,7 @@ export class Siege {
 	}
 	takeDamage(n) {
 		this.health = Math.max(0, this.health - n);
+		this.damageBlend = 1;
 	}
 	render(ctx) {
 		const sc = game.scale * game.room.fov;
@@ -241,9 +253,11 @@ export class Siege {
 		}
 		ctx.restore();
 
-		// 4. Main circular body on top of barrel mounts.
-		ctx.fillStyle = BODY_FILL;
-		ctx.strokeStyle = BODY_STROKE;
+		// 4. Main circular body on top of barrel mounts. Includes the OSA red hit-flash
+		// when state.damageBlendEnabled is on and damageBlend > 0.
+		const blend = state.damageBlendEnabled ? this.damageBlend * 0.5 : 0;
+		ctx.fillStyle = blend > 0 ? lerpColor(BODY_FILL, "#ff5050", blend) : BODY_FILL;
+		ctx.strokeStyle = blend > 0 ? lerpColor(BODY_STROKE, "#7a1a1a", blend) : BODY_STROKE;
 		ctx.lineWidth = lw;
 		ctx.beginPath();
 		ctx.arc(cx, cy, r, 0, Math.PI * 2);

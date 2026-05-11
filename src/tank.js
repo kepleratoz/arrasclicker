@@ -1,5 +1,5 @@
 import { state } from "./state.js";
-import { Vec2, formatNumber, lerpColor, REGEN_PER_FRAME } from "./utils.js";
+import { Vec2, formatNumber, lerpColor, REGEN_PER_FRAME, osaCurve, osaApply } from "./utils.js";
 import { game } from "./game.js";
 import { mouse, keys } from "./input.js";
 import { drawPolygon, drawHealthBar, drawText } from "./render.js";
@@ -25,15 +25,21 @@ const UPGRADE_LEVEL = 15;
 const UPGRADES_ENABLED = true;
 
 // Per-tank upgrade specs (also used by main.js for the per-tank upgrade panel).
-// `color` matches the OSA stat-bar palette (Max Health=gold, Reload=lgreen, Bullet
-// Damage=red, Bullet Health=green, Bullet Speed=teal, Move Speed=blue).
+// `color` matches the OSA stat-bar palette.
+// All caps at 10 to match OSA's stat-bar segment count.
 export const TANK_UPGRADE_SPECS = [
-	{ key: "hp",          label: "Max Health",    max: 10, baseCost: 100,  growth: 40, color: "#efc74b" },
-	{ key: "reload",      label: "Reload",        max: 5,  baseCost: 1e12, growth: 2,  color: "#b9e87e" },
-	{ key: "damage",      label: "Damage",        max: 5,  baseCost: 1e12, growth: 2,  color: "#e03e41" },
-	{ key: "bulletHealth",label: "Bullet Health", max: 5,  baseCost: 1e12, growth: 2,  color: "#8abc3f" },
-	{ key: "bulletSpeed", label: "Bullet Speed",  max: 5,  baseCost: 1e12, growth: 2,  color: "#7ad3db" },
-	{ key: "speed",       label: "Move Speed",    max: 3,  baseCost: 1e14, growth: 2,  color: "#3ca4cb" },
+	{ key: "hp",          label: "Max Health",      max: 10, baseCost: 100,  growth: 40, color: "#efc74b" },
+	{ key: "shieldCap",   label: "Shield Capacity", max: 10, baseCost: 1e12, growth: 2,  color: "#8d6adf" },
+	{ key: "shieldRegen", label: "Shield Regen",    max: 10, baseCost: 1e12, growth: 2,  color: "#ef99c3" },
+	{ key: "reload",      label: "Reload",          max: 10, baseCost: 1e12, growth: 2,  color: "#b9e87e" },
+	{ key: "damage",      label: "Damage",          max: 10, baseCost: 1e12, growth: 2,  color: "#e03e41" },
+	{ key: "penetration", label: "Bullet Pen",      max: 10, baseCost: 1e12, growth: 2,  color: "#fdf380" },
+	{ key: "bulletHealth",label: "Bullet Health",   max: 10, baseCost: 1e12, growth: 2,  color: "#8abc3f" },
+	{ key: "bulletSpeed", label: "Bullet Speed",    max: 10, baseCost: 1e12, growth: 2,  color: "#7ad3db" },
+	// Body Damage (atk): tanks don't collide with polygons in this game, so its main effect
+	// is feeding into `brst` (which drives RESIST and bullet penetration scaling).
+	{ key: "atk",         label: "Body Damage",     max: 10, baseCost: 1e12, growth: 2,  color: "#e7896d" },
+	{ key: "speed",       label: "Move Speed",      max: 10, baseCost: 1e14, growth: 2,  color: "#3ca4cb" },
 ];
 export function tankUpgradeCost(spec, level) { return spec.baseCost * Math.pow(spec.growth, level); }
 function defaultUpgrades() {
@@ -43,17 +49,88 @@ function defaultUpgrades() {
 }
 function up(tank, key) { return tank?.upgrades?.[key] ?? 0; }
 
-function tankShootInterval(tank) { return BASE_SHOOT_INTERVAL * Math.pow(0.9, up(tank, "reload")); }
+// OSA-style stat conversion (skills.js): each upgrade level passes through the curve,
+// then through `apply(f, attrib)` which is f·attrib + 1 for positive attrib.
+// Caps derived from TANK_UPGRADE_SPECS so the curve's level/cap ratio always matches
+// the actual upgrade max — avoids drift if specs are rebalanced later.
+const TANK_SKILL_CAPS = Object.fromEntries(TANK_UPGRADE_SPECS.map(s => [s.key, s.max]));
+function tankSkill(tank, key) { return osaCurve(up(tank, key), TANK_SKILL_CAPS[key] ?? 10); }
+function tankShootInterval(tank) { return BASE_SHOOT_INTERVAL * Math.pow(0.5, tankSkill(tank, "reload")); }
 function tankCanTarget(shape) { return shape.rarity < state.tankRarityCap - 1; }
 function tankCanLockOn(shape) { return tankCanTarget(shape) && shape.rarity !== 4; }
 function tankDamageMul(shape) { return shape.rarity === 4 ? 0.1 : 1; }
-function tankBaseDamage(tank) { return 1 + 0.5 * up(tank, "damage"); }
+function tankBaseDamage(tank) { return osaApply(3, tankSkill(tank, "damage")); }
 function tankBulletLife() { return BASE_BULLET_LIFE; }
-function tankBulletHealth(tank) { return 5 * Math.pow(1.2, up(tank, "bulletHealth")); }
-function tankSpeed(tank) { return BASE_TANK_SPEED * Math.pow(1.33, up(tank, "speed")); }
-function tankBulletSpeedMul(tank) { return Math.pow(1.2, up(tank, "bulletSpeed")); }
-function tankMaxHealth(tank) { return 10 * (1 + 0.1 * up(tank, "hp")); }
-const COLLISION_COOLDOWN_FRAMES = 3; // 60fps / 20 hits-per-second
+function tankBulletHealth(tank) { return 5 * osaApply(2, tankSkill(tank, "bulletHealth")); }
+function tankSpeed(tank) { return BASE_TANK_SPEED * osaApply(0.8, tankSkill(tank, "speed")); }
+function tankBulletSpeedMul(tank) { return osaApply(1.5, tankSkill(tank, "bulletSpeed")); }
+function tankBulletPen(tank) { return osaApply(2.5, tankSkill(tank, "penetration")); }
+function tankAtkSkill(tank) { return osaApply(0.021, tankSkill(tank, "atk")); }
+function tankHltSkill(tank) { return osaApply(1, tankSkill(tank, "hp")); }
+function tankRgnSkill(tank) { return osaApply(25, tankSkill(tank, "shieldRegen")); }
+function tankBurst(tank) { return 0.3 * (0.5 * tankAtkSkill(tank) + 0.5 * tankHltSkill(tank) + tankRgnSkill(tank)); }
+function tankResist(tank) { const RESIST = 0; return 1 - 1 / Math.max(1, RESIST + tankBurst(tank)); }
+function tankMaxHealth(tank) { return 10 * osaApply(1, tankSkill(tank, "hp")); }
+function tankMaxShield(tank) { return 5 * osaApply(2, tankSkill(tank, "shieldCap")); }
+// Base 0.167 HP/sec at the bell's peak ≈ OSA's cons·REGEN·10/3 = 5·0.01·10/3 ≈ 0.167.
+// Maxed (skill ×26) → ~4.3 HP/sec at peak. Was 0.4 — 4× too tanky against sustained fire.
+function tankShieldRegenRate(tank) { return 0.167 * osaApply(25, tankSkill(tank, "shieldRegen")); }
+// OSA has no explicit cooldown; the bell curve does the work at r→0. But sustained-damage
+// scenarios out-resolve the curve at mid-shield, so we hold regen for a short window after
+// each hit so shield breaks are actually felt.
+const SHIELD_REGEN_DELAY_MS = 1200;
+// OSA-style health regen: only ticks when shield is at max ("rest" mechanic).
+// 25 HP/s when shielded comes from healthType.js: cons(5) × boost(0.5) per 100ms tick × 10 = 25/s.
+const HEALTH_REGEN_PER_SEC_SHIELDED = 25;
+// OSA collision damage: every overlapping frame, both sides take symmetric damage scaled by
+// ratio (low-HP → less damage, modulated by penetration), the depth-based "damage effects"
+// term (bullets sinking deeper deal less per frame and take less back), the speed factor
+// (capped 2× for fast attackers), and the death factor (overkill prevention — if either
+// side would die, the other only delivers a proportional share of damage).
+function osaCollideDamage(bullet, target, dx, dy, dist, combinedRadius) {
+	const depthBullet = Math.max(0, Math.min(1, (combinedRadius - dist) / (2 * Math.max(0.01, bullet.size))));
+	const depthTarget = Math.max(0, Math.min(1, (combinedRadius - dist) / (2 * Math.max(0.01, target.size))));
+	const accelFactor = (combinedRadius / 4) / (Math.floor(combinedRadius / dist) + 1);
+	const dirX = dx / dist;
+	const dirY = dy / dist;
+	const vlen = Math.max(0.001, Math.sqrt(bullet.velocity.x * bullet.velocity.x + bullet.velocity.y * bullet.velocity.y));
+	const component = Math.max(0, bullet.velocity.x * dirX + bullet.velocity.y * dirY);
+	const componentNorm = component / vlen;
+	const bulletPen = Math.max(0.1, bullet.penetration ?? 1);
+	const targetPen = Math.max(0.1, target.penetration ?? 1);
+	const penTargetSqrt = Math.sqrt(targetPen);
+	const penBulletSqrt = Math.sqrt(bulletPen);
+	const speedFactor = bullet.maxSpeed ? Math.pow(vlen / bullet.maxSpeed, 0.25) : 1;
+	const speedMul = Math.min(2, Math.max(speedFactor, 1) * speedFactor);
+	const buffMul = (bullet.buffVsFood && target.damageType === 1) ? 3 : 1;
+	// OSA resistDiff: higher-resist attacker deals more, takes less. resist ∈ [0, ~0.88].
+	const resistDiff = (bullet.resist ?? 0) - (target.resist ?? 0);
+	let dmgToTarget = bullet.damage * buffMul * speedMul * tankDamageMul(target) * (1 + resistDiff);
+	let dmgToBullet = (target.damage ?? 0) * (1 - resistDiff);
+	// Ratio damage: wounded attackers deal less, modulated by their pen.
+	if (target.maxHealth > 0) {
+		const r = Math.max(0.0001, target.health / target.maxHealth);
+		dmgToBullet *= Math.min(1, Math.pow(r, 1 / targetPen));
+	}
+	if (bullet.maxHealth > 0) {
+		const r = Math.max(0.0001, bullet.health / bullet.maxHealth);
+		dmgToTarget *= Math.min(1, Math.pow(r, 1 / bulletPen));
+	}
+	// Damage-effects: depth + pen-vs-pen scaling per frame (the "sinking in" curve).
+	dmgToTarget *= accelFactor *
+		(1 + (componentNorm - 1) * (1 - depthTarget) / bulletPen) *
+		(1 + penTargetSqrt * depthTarget - depthTarget) / penTargetSqrt;
+	dmgToBullet *= accelFactor *
+		(1 + (componentNorm - 1) * (1 - depthBullet) / targetPen) *
+		(1 + penBulletSqrt * depthBullet - depthBullet) / penBulletSqrt;
+	dmgToTarget = Math.max(0, dmgToTarget);
+	dmgToBullet = Math.max(0, dmgToBullet);
+	// Death factor: scale the survivor's damage taken when the dying side can't fully connect.
+	const deathFactorBullet = (dmgToBullet > bullet.health) ? bullet.health / dmgToBullet : 1;
+	const deathFactorTarget = (dmgToTarget > target.health) ? target.health / dmgToTarget : 1;
+	return { toTarget: dmgToTarget * deathFactorBullet, toBullet: dmgToBullet * deathFactorTarget };
+}
+
 const DEATH_FRAMES = 18; // ~300ms at 60fps to match OSA's getFade decay
 
 export class Bullet {
@@ -69,15 +146,25 @@ export class Bullet {
 		const upgradeSpeedMul = shootCfg.ignoreUpgradeSpeed
 			? 1
 			: this.isTrap ? 1 + (tankBulletSpeedMul(tank) - 1) * 0.5 : tankBulletSpeedMul(tank);
-		this.velocity = Vec2.circle(angle, BULLET_SPEED * speedMul * shudderMul * upgradeSpeedMul);
+		this.maxSpeed = BULLET_SPEED * speedMul * upgradeSpeedMul;
+		this.velocity = Vec2.circle(angle, this.maxSpeed * shudderMul);
 		this.size = sizeOverride ?? (tank.size * gunWidth * sizeMul) / 2;
 		this.tank = tank;
 		this.life = tankBulletLife() * rangeMul * (this.isTrap ? 3 : 1);
 		this.damage = (shootCfg.ignoreUpgradeDamage ? 1 : tankBaseDamage(tank)) * damageMul;
+		this.penetration = (shootCfg.penetration ?? tankBulletPen(tank));
+		// Bullets inherit the firing tank's resist (RESIST + brst) so the OSA resistDiff
+		// term works against both shapes and other entities. Sentries/Sanctuary shooters
+		// don't have upgrade tracks, so up() returns 0 and resist comes out near 0.
+		this.resist = (tank && tank.upgrades) ? tankResist(tank) : 0;
 		this.health = (shootCfg.ignoreUpgradeHealth ? 5 : tankBulletHealth(tank)) * healthMul;
 		this.maxHealth = this.health;
 		this.isHeal = !!shootCfg.isHeal;
 		this.healAmount = shootCfg.healAmount ?? 0;
+		this.targetsTanks = !!shootCfg.targetsTanks;
+		// OSA's `buffVsFood`: ×3 damage to entities tagged as food (damageType === 1).
+		// Inherited from the shooter so all tank-fired bullets get it automatically.
+		this.buffVsFood = !!(shootCfg.buffVsFood || (tank && tank.buffVsFood));
 		this.collisionCooldown = 0;
 		this.dying = 0;
 		this.dead = false;
@@ -108,9 +195,44 @@ export class Bullet {
 		}
 		this.life -= 1;
 		if (this.life <= 0) { this.startDying(); return; }
+		if (this.targetsTanks) {
+			// Tanks first — OSA continuous multihit, damage routed through shield → health.
+			for (const t of game.tanks) {
+				if (t.isDead && t.isDead()) continue;
+				const dx = t.pos.x - this.pos.x;
+				const dy = t.pos.y - this.pos.y;
+				const dist = Math.max(0.001, Math.sqrt(dx * dx + dy * dy));
+				const combinedRadius = t.size + this.size;
+				if (dist >= combinedRadius) continue;
+				const result = osaCollideDamage(this, t, dx, dy, dist, combinedRadius);
+				if (result.toTarget > 0) t.takeDamage(result.toTarget);
+				this.health -= result.toBullet;
+				if (this.health <= 0) { this.startDying(); return; }
+				break;
+			}
+			// Sanctuaries are also valid friendly targets for enemy bullets.
+			if (!this.dying) {
+				for (const sg of game.sieges) {
+					if (sg.health <= 0) continue;
+					const dx = sg.pos.x - this.pos.x;
+					const dy = sg.pos.y - this.pos.y;
+					const dist = Math.max(0.001, Math.sqrt(dx * dx + dy * dy));
+					const combinedRadius = sg.size + this.size;
+					if (dist >= combinedRadius) continue;
+					const result = osaCollideDamage(this, sg, dx, dy, dist, combinedRadius);
+					if (result.toTarget > 0) sg.takeDamage(result.toTarget);
+					this.health -= result.toBullet;
+					if (this.health <= 0) { this.startDying(); return; }
+					break;
+				}
+			}
+			return;
+		}
 		if (this.isHeal) {
-			// Heal bullets only interact with injured tanks; they pass through everything else,
-			// deal no damage, and instantly break on healing impact.
+			// Heal bullets behave like normal bullets, except: on contact with an INJURED
+			// tank they restore health and instantly break. They still flow into the shape
+			// collision below (with damage=0 they only take damage), so shapes/enemy bullets
+			// can intercept them just like ordinary projectiles.
 			for (const t of game.tanks) {
 				if (t.isDead && t.isDead()) continue;
 				if (t.health >= t.maxHealth) continue;
@@ -122,32 +244,36 @@ export class Bullet {
 					return;
 				}
 			}
-			return;
+			// fall through to the standard shape collision loop below.
 		}
-		if (this.collisionCooldown > 0) { this.collisionCooldown -= 1; return; }
+		// OSA-style continuous multihit: every frame the bullet overlaps a target both sides
+		// take symmetric damage, scaled by ratio/pen/depth/speed/death-factor. No cooldown —
+		// the depth term naturally tapers each frame's damage as the bullet sinks in.
 		for (const shape of game.shapes) {
 			if (shape.isDead() || !tankCanTarget(shape)) continue;
 			const dx = shape.pos.x - this.pos.x;
 			const dy = shape.pos.y - this.pos.y;
-			if (Math.sqrt(dx * dx + dy * dy) < shape.size + this.size) {
-				shape.health -= this.damage * tankDamageMul(shape);
-				this.health -= shape.type + 1;
-				if (shape.health <= 0 && !shape.dying) {
-					shape.startDying();
-					state.score += shape.score;
-					const sc = game.scale * game.room.fov;
-					game.flyingText.push({
-						x: shape.pos.x * sc,
-						y: shape.pos.y * sc,
-						alpha: 1,
-						text: "+" + formatNumber(shape.score),
-					});
-					if (this.tank && typeof this.tank.gainXp === "function") this.tank.gainXp(getJackpot(shapeXpValue(shape)));
-				}
-				this.collisionCooldown = COLLISION_COOLDOWN_FRAMES;
-				if (this.health <= 0) { this.startDying(); return; }
-				break;
+			const dist = Math.max(0.001, Math.sqrt(dx * dx + dy * dy));
+			const combinedRadius = shape.size + this.size;
+			if (dist >= combinedRadius) continue;
+			const result = osaCollideDamage(this, shape, dx, dy, dist, combinedRadius);
+			shape.health -= result.toTarget;
+			this.health -= result.toBullet;
+			if (result.toTarget > 0) shape.damageBlend = 1;
+			if (shape.health <= 0 && !shape.dying) {
+				shape.startDying();
+				state.score += shape.score;
+				const sc = game.scale * game.room.fov;
+				game.flyingText.push({
+					x: shape.pos.x * sc,
+					y: shape.pos.y * sc,
+					alpha: 1,
+					text: "+" + formatNumber(shape.score),
+				});
+				if (this.tank && typeof this.tank.gainXp === "function") this.tank.gainXp(getJackpot(shapeXpValue(shape)));
 			}
+			if (this.health <= 0) { this.startDying(); return; }
+			break;
 		}
 	}
 	render(ctx) {
@@ -155,8 +281,14 @@ export class Bullet {
 		const fade = this.dying ? Math.max(0, 1 - this.dying / DEATH_FRAMES) : 1;
 		const sizeMul = 1 + 0.5 * (1 - fade);
 		ctx.globalAlpha = fade;
-		ctx.fillStyle = BODY_FILL;
-		ctx.strokeStyle = BODY_STROKE;
+		// Sentry-fired bullets render pink to match the triangle that shot them.
+		if (this.targetsTanks) {
+			ctx.fillStyle = "#ef99c3";
+			ctx.strokeStyle = "#a55c83";
+		} else {
+			ctx.fillStyle = BODY_FILL;
+			ctx.strokeStyle = BODY_STROKE;
+		}
 		ctx.lineWidth = 4 * sc;
 		if (this.isTrap) {
 			drawTrap(ctx, this.pos.x * sc, this.pos.y * sc, this.size * sizeMul * sc, this.angle);
@@ -217,12 +349,17 @@ export class Tank {
 		this.setClass("basic");
 		this.recomputeSize();
 		this.upgrades = defaultUpgrades();
+		this.buffVsFood = true;      // all tank-fired bullets deal ×3 damage to food shapes.
 		this.maxHealth = tankMaxHealth(this);
 		this.health = this.maxHealth;
+		this.maxShield = tankMaxShield(this);
+		this.shield = this.maxShield;
+		this.lastDamageTime = 0;     // performance.now() of last incoming damage; gates shield regen.
 		this.respawnAt = null;       // performance.now() timestamp; null while alive.
 		this.deathPos = null;
 		this.deathStartTime = null;  // when current death animation started.
 		this.spawnStartTime = null;  // when current spawn animation started.
+		this.damageBlend = 0;        // OSA-style red-flash on damage; decays per frame.
 	}
 	isDead() { return this.respawnAt !== null; }
 	die() {
@@ -259,6 +396,9 @@ export class Tank {
 		this.recomputeSize();
 		this.maxHealth = tankMaxHealth(this);
 		this.health = this.maxHealth;
+		this.maxShield = tankMaxShield(this);
+		this.shield = this.maxShield;
+		this.lastDamageTime = 0;
 		this.velocity = new Vec2();
 		this.respawnAt = null;
 		this.deathPos = null;
@@ -272,9 +412,45 @@ export class Tank {
 			this.maxHealth = newMax;
 			this.health = newMax * ratio;
 		}
+		const newMaxShield = tankMaxShield(this);
+		if (newMaxShield !== this.maxShield) {
+			const r = this.maxShield > 0 ? this.shield / this.maxShield : 1;
+			this.maxShield = newMaxShield;
+			this.shield = newMaxShield * r;
+		}
+	}
+	// OSA dynamic-shield regen (healthType.js → "dynamic" branch). The bell-curve
+	// `regenMultiplier` peaks at ~32% shield and drops off near 0 and full, so a fully-
+	// drained shield refills slowly at first. Plus a linear floor proportional to current
+	// shield so it doesn't stall completely. No post-damage delay (matches OSA).
+	tickShieldRegen() {
+		if (this.maxShield <= 0 || this.shield >= this.maxShield) return;
+		if (performance.now() - this.lastDamageTime < SHIELD_REGEN_DELAY_MS) return;
+		const r = this.shield / this.maxShield;
+		const regenMul = Math.exp(-50 * Math.pow(Math.sqrt(r / 2) - 0.4, 2));
+		const skillRate = tankShieldRegenRate(this);     // HP/sec at the bell-curve peak.
+		// Was r·max/3; dropped to /15 so the floor doesn't dominate mid-shield against light damage.
+		const linearFloor = (r * this.maxShield) / 15;
+		const perSec = skillRate * regenMul + linearFloor;
+		this.shield = Math.min(this.maxShield, this.shield + perSec / 60);
+	}
+	// OSA static-health regen: only heals when shield is at max ("rest" mechanic).
+	tickHealthRegen() {
+		if (this.health >= this.maxHealth) return;
+		const shieldFull = this.maxShield > 0 && this.shield >= this.maxShield;
+		if (!shieldFull) return;
+		this.health = Math.min(this.maxHealth, this.health + HEALTH_REGEN_PER_SEC_SHIELDED / 60);
 	}
 	takeDamage(n) {
 		if (this.isDead()) return;
+		this.lastDamageTime = performance.now();
+		this.damageBlend = 1;
+		if (this.shield > 0) {
+			const absorbed = Math.min(this.shield, n);
+			this.shield -= absorbed;
+			n -= absorbed;
+		}
+		if (n <= 0) return;
 		this.health = Math.max(0, this.health - n);
 		if (this.health <= 0) this.die();
 	}
@@ -343,7 +519,17 @@ export class Tank {
 			}
 		}
 		this.syncMaxHealth();
-		if (this.health < this.maxHealth) this.health = Math.min(this.maxHealth, this.health + REGEN_PER_FRAME);
+		this.resist = tankResist(this);     // OSA resist = 1 - 1/max(1, RESIST + brst).
+		// Body damage and penetration so incoming bullets can compute the OSA formula
+		// against this tank as a target. We don't add tank-vs-shape physical collision.
+		const atkSk = tankAtkSkill(this);
+		const brst = tankBurst(this);
+		this.damage = atkSk;                // base tank body damage = 1 × atk skill.
+		this.penetration = 1 + 1.5 * (brst + 0.8 * (atkSk - 1));
+		this.damageBlend *= 0.85;           // OSA-style hit-flash decay.
+		if (this.damageBlend < 0.01) this.damageBlend = 0;
+		this.tickShieldRegen();
+		this.tickHealthRegen();
 		const isControlled = game.controlledTank === this;
 		let target;
 		if (isControlled) {
@@ -383,7 +569,8 @@ export class Tank {
 				while (delta < -Math.PI) delta += Math.PI * 2;
 				this.angle += Math.max(-MAX_TURN_PER_FRAME, Math.min(MAX_TURN_PER_FRAME, delta));
 				const dist = Math.sqrt(dx * dx + dy * dy);
-				const desired = Math.max(60, target.size + this.size + 30);
+				const keepout = target.isSentry ? 220 : 30;
+				const desired = Math.max(60, target.size + this.size + keepout);
 				const speed = tankSpeed(this);
 				if (dist > desired) {
 					this.velocity.x = Math.cos(this.angle) * speed;
@@ -554,9 +741,12 @@ function renderTank(ctx, tank, posX, posY, angle, size, applyRoomFov, bodyFill =
 	if (applyRoomFov && !skipBullets) {
 		for (const b of tank.bullets) b.render(ctx);
 	}
-	drawTankShape(ctx, def, tank.gunStates, cx, cy, angle, size * sc, 4 * sc, bodyFill, bodyStroke);
+	const blend = state.damageBlendEnabled ? (tank.damageBlend ?? 0) * 0.5 : 0;
+	const flashFill = blend > 0 ? lerpColor(bodyFill, "#ff5050", blend) : bodyFill;
+	const flashStroke = blend > 0 ? lerpColor(bodyStroke, "#7a1a1a", blend) : bodyStroke;
+	drawTankShape(ctx, def, tank.gunStates, cx, cy, angle, size * sc, 4 * sc, flashFill, flashStroke);
 	if (applyRoomFov && tank.maxHealth != null && !(tank.isDead && tank.isDead())) {
-		drawHealthBar(ctx, cx, cy, size * sc, tank.health, tank.maxHealth, game.scale);
+		drawHealthBar(ctx, cx, cy, size * sc, tank.health, tank.maxHealth, game.scale, false, tank.shield ?? 0, tank.maxShield ?? 0);
 	}
 	if (applyRoomFov) {
 		if (game.controlledTank === tank) {
@@ -582,10 +772,46 @@ function renderTank(ctx, tank, posX, posY, angle, size, applyRoomFov, bodyFill =
 	}
 }
 
+// Tank-mockup cache: each class is rendered once to an offscreen canvas using the
+// SAME drawTankShape proportions the in-game tank uses (size = TANK_SIZE, stroke = 4),
+// just at a higher reference resolution so it scales cleanly. Previews then blit the
+// cached image so the box looks pixel-equivalent to the real thing.
+const MOCKUP_REFERENCE_SIZE = 24;        // in-game equivalent: a max-level tank radius.
+const MOCKUP_RES_SCALE = 4;              // 4× supersample for crisp scaling in the preview boxes.
+const MOCKUP_PADDING = 24;               // room for barrels and stroke overflow.
+const tankMockupCache = new Map();
+
+function getTankMockup(defKey) {
+	const cached = tankMockupCache.get(defKey);
+	if (cached) return cached;
+	const def = TANK_DEFS[defKey];
+	const renderSize = MOCKUP_REFERENCE_SIZE * MOCKUP_RES_SCALE;
+	const padding = MOCKUP_PADDING * MOCKUP_RES_SCALE;
+	const dim = renderSize * 2 + padding * 2;
+	const canvas = document.createElement("canvas");
+	canvas.width = canvas.height = dim;
+	const mctx = canvas.getContext("2d");
+	mctx.lineCap = "round";
+	mctx.lineJoin = "round";
+	// Use the same stroke ratio (4·sc) the live tank uses; sc here is MOCKUP_RES_SCALE.
+	drawTankShape(mctx, def, null, dim / 2, dim / 2, -Math.PI / 2, renderSize, 4 * MOCKUP_RES_SCALE);
+	const entry = { canvas, halfDim: dim / 2, refSize: renderSize };
+	tankMockupCache.set(defKey, entry);
+	return entry;
+}
+
 export function renderTankPreview(ctx, tank, x, y, size, angleOverride) {
 	const angle = angleOverride ?? -Math.PI / 2;
-	const def = TANK_DEFS[tank.defKey];
-	drawTankShape(ctx, def, null, x, y, angle, size, size * (4 / 12));
+	const m = getTankMockup(tank.defKey);
+	// `size` is the desired body radius in display pixels; the mockup's body radius is
+	// renderSize, so scale = size / renderSize maps the mockup correctly.
+	const drawScale = size / m.refSize;
+	const halfDst = m.halfDim * drawScale;
+	ctx.save();
+	ctx.translate(x, y);
+	ctx.rotate(angle + Math.PI / 2);   // mockup was rendered facing -y, rotate to override.
+	ctx.drawImage(m.canvas, -halfDst, -halfDst, halfDst * 2, halfDst * 2);
+	ctx.restore();
 }
 
 export function tankUnderMouse() {
@@ -615,6 +841,8 @@ export function syncTanks() {
 			t.recomputeSize();
 			t.maxHealth = tankMaxHealth(t);
 			t.health = saved.health != null ? Math.min(saved.health, t.maxHealth) : t.maxHealth;
+			t.maxShield = tankMaxShield(t);
+			t.shield = saved.shield != null ? Math.min(saved.shield, t.maxShield) : t.maxShield;
 		}
 		game.tanks.push(t);
 	}
@@ -631,5 +859,6 @@ export function snapshotTanks() {
 		pos: { x: t.pos.x, y: t.pos.y },
 		upgrades: { ...t.upgrades },
 		health: t.health,
+		shield: t.shield,
 	}));
 }

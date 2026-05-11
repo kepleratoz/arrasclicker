@@ -71,6 +71,31 @@ class Game {
 		}
 		for (const tank of this.tanks) tank.update();
 		for (const siege of this.sieges) siege.update();
+		// Mutual-damage pass: any friendly bullet (tank or sanctuary, including heal bullets
+		// which carry damage 0) collides with sentry bullets and both sides take damage.
+		const friendlyBulletGroups = [];
+		for (const tank of this.tanks) friendlyBulletGroups.push(tank.bullets);
+		for (const siege of this.sieges) friendlyBulletGroups.push(siege.bullets);
+		for (const group of friendlyBulletGroups) {
+			for (const ob of group) {
+				if (ob.dying) continue;
+				for (const sh of this.shapes) {
+					if (!sh.isSentry || !sh.bullets) continue;
+					for (const sb of sh.bullets) {
+						if (sb.dying) continue;
+						const dx = sb.pos.x - ob.pos.x;
+						const dy = sb.pos.y - ob.pos.y;
+						if (Math.sqrt(dx * dx + dy * dy) < sb.size + ob.size) {
+							sb.health -= ob.damage;
+							ob.health -= sb.damage;
+							if (sb.health <= 0) sb.startDying();
+							if (ob.health <= 0) { ob.startDying(); break; }
+						}
+					}
+					if (ob.dying) break;
+				}
+			}
+		}
 		for (let i = this.flyingText.length - 1; i > -1; --i) {
 			const ft = this.flyingText[i];
 			ft.y -= 1;

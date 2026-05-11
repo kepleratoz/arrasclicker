@@ -18,27 +18,36 @@ export function drawText(ctx, text, x, y, isWarning = false, stroke = true, cent
 
 // OSA-style health bar: black background line + colored health line, both round-capped.
 // Renders only when health < maxHealth. (cx, cy) is the entity center; halfSize is the bar half-width.
-export function drawHealthBar(ctx, cx, cy, halfSize, health, maxHealth, scale, forceShow = false) {
-	if (maxHealth <= 0) return;
-	if (!forceShow && health >= maxHealth) return;
-	const barY = cy + halfSize + 14 * scale;
-	const bgW = 6 * scale;
-	const fgW = 4 * scale;
-	const ratio = Math.max(0, Math.min(1, health / maxHealth));
-	const prevCap = ctx.lineCap;
+function drawBarLine(ctx, x, y, halfSize, ratio, bgW, fgW, color) {
 	ctx.lineCap = "round";
 	ctx.strokeStyle = "#000000";
 	ctx.lineWidth = bgW;
 	ctx.beginPath();
-	ctx.moveTo(cx - halfSize, barY);
-	ctx.lineTo(cx + halfSize, barY);
+	ctx.moveTo(x - halfSize, y);
+	ctx.lineTo(x + halfSize, y);
 	ctx.stroke();
-	ctx.strokeStyle = "#85e37d";
+	ctx.strokeStyle = color;
 	ctx.lineWidth = fgW;
 	ctx.beginPath();
-	ctx.moveTo(cx - halfSize, barY);
-	ctx.lineTo(cx - halfSize + 2 * halfSize * ratio, barY);
+	ctx.moveTo(x - halfSize, y);
+	ctx.lineTo(x - halfSize + 2 * halfSize * Math.max(0, Math.min(1, ratio)), y);
 	ctx.stroke();
+}
+
+export function drawHealthBar(ctx, cx, cy, halfSize, health, maxHealth, scale, forceShow = false, shield = 0, maxShield = 0) {
+	if (maxHealth <= 0 && maxShield <= 0) return;
+	const showHealth = maxHealth > 0 && (forceShow || health < maxHealth);
+	const hasShield = maxShield > 0;
+	const showShield = hasShield && (forceShow || shield < maxShield);
+	if (!showHealth && !showShield) return;
+	const bgW = 6 * scale;
+	const fgW = 4 * scale;
+	const baseY = cy + halfSize + 14 * scale;
+	const shieldY = baseY;
+	const healthY = hasShield ? baseY + 7 * scale : baseY;
+	const prevCap = ctx.lineCap;
+	if (showShield) drawBarLine(ctx, cx, shieldY, halfSize, shield / maxShield, bgW, fgW, "#7ad3db");
+	if (showHealth) drawBarLine(ctx, cx, healthY, halfSize, health / maxHealth, bgW, fgW, "#85e37d");
 	ctx.lineCap = prevCap;
 }
 
