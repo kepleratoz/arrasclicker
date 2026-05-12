@@ -8,7 +8,7 @@ import { drawText } from "./render.js";
 import { tabs, generalTab } from "./tabs.js";
 import { encode, decode, saveToStorage, loadFromStorage, enableAutoSave, onBeforeSave } from "./save.js";
 import { renderDebugPanel, updateDebug, shapeUnderMouse } from "./debug.js";
-import { syncTanks, tankUnderMouse, renderTankPreview, snapshotTanks, TANK_UPGRADE_SPECS, tankUpgradeCost } from "./tank.js";
+import { syncTanks, tankUnderMouse, renderTankPreview, snapshotTanks, TANK_UPGRADE_SPECS, tankUpgradeCost, tankSkillPointsSpent, tankSkillPointsCap, tankSkillPointsRemaining } from "./tank.js";
 import { Siege } from "./siege.js";
 import { TANK_DEFS } from "./tankDefs.js";
 import { formatNumber } from "./utils.js";
@@ -229,7 +229,9 @@ function planBulkUpgrade(tank, spec, desired) {
 	let total = 0;
 	let count = 0;
 	let scoreLeft = state.score;
-	while (count < desired && level < spec.max) {
+	const pointsLeft = tankSkillPointsRemaining(tank);
+	const cap = Math.min(desired, pointsLeft);
+	while (count < cap && level < spec.max) {
 		const cost = tankUpgradeCost(spec, level);
 		if (scoreLeft < cost) break;
 		scoreLeft -= cost;
@@ -256,8 +258,12 @@ function renderTankInfoPanel(tank) {
 	const maxSh = Math.round(tank.maxShield ?? 0);
 	const shieldLabel = "Shield " + sh + "/" + maxSh;
 	const levelLabel = "Lvl " + tank.level + " (" + formatNumber(tank.xpProgress()) + "/" + formatNumber(tank.xpNeeded()) + ")";
-	drawText(ctx, levelLabel + "  |  " + shieldLabel, x, yTop + lineH, false, true, false, 24 * s);
+	const pointsRemaining = tankSkillPointsRemaining(tank);
+	const pointsCap = tankSkillPointsCap(tank);
+	const pointsLabel = "Points " + (pointsCap - pointsRemaining) + "/" + pointsCap;
+	drawText(ctx, levelLabel + "  |  " + shieldLabel + "  |  " + pointsLabel, x, yTop + lineH, false, true, false, 24 * s);
 	const desired = bulkBuyQuantity();
+	const noPoints = pointsRemaining <= 0;
 	for (const b of bars) {
 		const level = tank.upgrades?.[b.spec.key] ?? 0;
 		const maxed = level >= b.spec.max;
@@ -265,13 +271,14 @@ function renderTankInfoPanel(tank) {
 		const canAfford = plan.count > 0;
 		const hovered = mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
 		drawStatBar(ctx, b.x, b.y, b.w, b.h, level, b.spec.max, b.spec.color);
-		if (hovered && !maxed) {
+		if (hovered && !maxed && !noPoints) {
 			ctx.fillStyle = mouse.left && canAfford ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.18)";
 			ctx.fillRect(b.x, b.y, b.w, b.h);
 		}
 		drawText(ctx, b.spec.label + " " + level + "/" + b.spec.max, b.x + 8 * s, b.y + b.h / 2 - 8 * s, false, true, false, 16 * s);
 		let costText;
 		if (maxed) costText = "MAX";
+		else if (noPoints) costText = "No points";
 		else if (desired > 1 && plan.count >= 1) costText = formatNumber(plan.total) + " (x" + plan.count + ")";
 		else if (canAfford) costText = formatNumber(plan.total);
 		else costText = formatNumber(tankUpgradeCost(b.spec, level)) + " (need score)";
@@ -304,7 +311,7 @@ game.init({ Room, tabs, generalTab });
 
 loadFromStorage();
 syncTanks();
-game.sieges.push(new Siege());
+// Sanctuary no longer auto-spawns; toggle it via the debug panel.
 onBeforeSave(snapshotTanks);
 enableAutoSave();
 
@@ -356,8 +363,9 @@ function frame(now) {
 			const rarityLabel = hovered.rarity >= 0 ? rarityNames[hovered.rarity] + " " : "";
 			const yBase = game.height - 12 * s - lineH * 3;
 			const hpDisplay = " - " + Math.max(0, Math.floor(hovered.health)) + "/" + hovered.maxHealth;
-			drawText(game.ctx, rarityLabel + TYPE_NAMES[hovered.type] + hpDisplay, x, yBase, false, true, false, 28 * s);
-			drawText(game.ctx, "Tier " + hovered.layers, x, yBase + lineH, false, true, false, 24 * s);
+			const typeName = hovered.isSentry ? "Sentry" : TYPE_NAMES[hovered.type];
+			drawText(game.ctx, rarityLabel + typeName + hpDisplay, x, yBase, false, true, false, 28 * s);
+			if (!hovered.isSentry) drawText(game.ctx, "Tier " + hovered.layers, x, yBase + lineH, false, true, false, 24 * s);
 			drawText(game.ctx, formatNumber(hovered.score) + " score", x, yBase + lineH * 2, false, true, false, 24 * s);
 		}
 	} catch (e) {

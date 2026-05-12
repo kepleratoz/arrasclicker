@@ -9,7 +9,11 @@ import { drawHealthBar } from "./render.js";
 const BODY_SIZE = 72;
 const MAX_TANK_SIZE = 24;            // Trapper barrels are sized as if mounted on a max-level tank.
 const BARREL_TANK_SIZE = MAX_TANK_SIZE * 1.5;  // Sanctuary trap launchers render 1.5× a max tank's.
-const BARREL_COUNT = 3;
+// Sanctuary tiers. Tier 2 doubles barrel counts and halves shoot intervals across the board.
+const SANCTUARY_TIERS = {
+	1: { trapCount: 3, healerCount: 3, reloadMul: 1 },
+	2: { trapCount: 6, healerCount: 6, reloadMul: 0.5 },
+};
 // OSA Class.sanctuary FACING_TYPE: ["spin", { speed: 0.025 }]. Doubled from our previous 0.012.
 const SPIN_RATE = 0.024;
 const SHOOT_INTERVAL = 1000;         // 1 second between volleys
@@ -29,13 +33,30 @@ const TRAP_TIP_OFFSET = TRAP_BODY_LEN + TRAP_NOSE_LEN;
 // Higher = barrel pulled closer to the Sanctuary; tip protrusion = barrel_length − inset.
 const MOUNT_INSET_FACTOR = 1.24;
 
-// Matches the tank Trapper's shoot config exactly.
+// OSA Class.sanctuaryTier* trap gun PROPERTIES.SHOOT_SETTINGS:
+//   combineStats([g.trap, { shudder: 0.15, health: 7, reload: 1.5, speed: 1 }])
+//   g.trap: { reload: 23, shudder: 0.25, size: 0.7, damage: 0.75, speed: 3.25, resist: 3, spray: 0 }
+// Net trap-bullet multipliers used here:
+//   speed = 3.25 × 1 ≈ 3.25 (we keep 1.5 since our isTrap path halves speed gain anyway)
+//   damage = 0.75 (vs base) — softer per-hit
+//   size = 1.7 (matching tank Trapper visual)
+//   range = 2.5
+//   health = 7 — was missing; this is what kept sanctuary traps too fragile.
 const SIEGE_TRAP_SHOOT = {
 	isTrap: true,
-	damage: 1.5,
+	damage: 1.5,                                 // 2× OSA's 0.75.
 	speed: 1.5,
 	size: 1.7,
 	range: 2.5,
+	health: 14,                                  // 2× OSA's 7.
+	// OSA gunvals.trap has resist: 3 (multiplier) and ~3× pen via STAT_CALCULATOR("trap").
+	// Without this override the trap inherits pen=1 → ratio damage tails off fast as it
+	// chips, and resistDiff with a 0.88-resist Sentry destroys it. Setting penetration: 3
+	// keeps trap damage flat through its lifespan; resist is now inherited from the
+	// sanctuary's own 0.879 so trades against Sentries are roughly even.
+	penetration: 3,
+	// Sanctuary traps are a defensive shell — they shouldn't touch polygons.
+	ignoreFood: true,
 };
 // Bullet radius matches the launcher's nose-tip width.
 const SIEGE_TRAP_BULLET_RADIUS = (BARREL_TANK_SIZE * TRAP_NOSE_W * TRAP_NOSE_ASPECT) / 2;
@@ -100,39 +121,44 @@ function drawSharpPolygon(ctx, points) {
 }
 
 export class Siege {
-	constructor() {
+	constructor(tier = 1) {
+		const cfg = SANCTUARY_TIERS[tier] ?? SANCTUARY_TIERS[1];
+		this.tier = tier;
+		this.trapCount = cfg.trapCount;
+		this.healerCount = cfg.healerCount;
+		this.reloadMul = cfg.reloadMul;
 		this.pos = new Vec2();
 		this.angle = 0;
 		this.size = BODY_SIZE;
 		this.maxHealth = 300;
 		this.health = 300;
 		this.damageBlend = 0;        // OSA-style red hit-flash; gated by state.damageBlendEnabled.
-		// OSA collision fields so incoming bullets can compute the damage formula against us.
-		// OSA Class.sanctuary BODY: { HEALTH: 1280, DAMAGE: 5.5, SHIELD: ... }.
-		this.penetration = 1;
-		this.resist = 0;
+		// OSA collision fields. Class.sanctuary BODY: { HEALTH: 1280, DAMAGE: 5.5, SHIELD: ... },
+		// LEVEL 45 with full skills → brst ≈ 8.25 → resist = 1 - 1/8.25 ≈ 0.879. Same scale as Sentry.
+		this.penetration = 3;
+		this.resist = 1 - 1 / 8.25;
 		this.damage = 5.5;           // chips bullets that ram into the sanctuary.
 		this.damageType = 0;         // not food.
 		this.bullets = [];
 		this.shootTime = 0;
-		this.gunStates = Array.from({ length: BARREL_COUNT }, () => ({ position: 0, motion: 0 }));
+		this.gunStates = Array.from({ length: this.trapCount }, () => ({ position: 0, motion: 0 }));
 		this.healerTurret = {
 			angle: 0,
 			shootTime: 0,
-			gunStates: Array.from({ length: 3 }, () => ({ position: 0, motion: 0 })),
+			gunStates: Array.from({ length: this.healerCount }, () => ({ position: 0, motion: 0 })),
 		};
 	}
 	updateHealerTurret(now) {
 		this.healerTurret.angle += HEALER_SPIN_RATE;
 		if (now > this.healerTurret.shootTime) {
-			for (let i = 0; i < 3; i++) {
-				const a = this.healerTurret.angle + (i / 3) * Math.PI * 2;
+			for (let i = 0; i < this.healerCount; i++) {
+				const a = this.healerTurret.angle + (i / this.healerCount) * Math.PI * 2;
 				const tipX = this.pos.x + Math.cos(a) * HEALER_TOTAL_LEN * HEALER_SIZE;
 				const tipY = this.pos.y + Math.sin(a) * HEALER_TOTAL_LEN * HEALER_SIZE;
 				this.bullets.push(new Bullet(new Vec2(tipX, tipY), a, this, HEALER_BULLET_CFG, HEALER_NOSE_W, 1, HEALER_BULLET_RADIUS));
 				this.healerTurret.gunStates[i].motion += RECOIL_IMPULSE;
 			}
-			this.healerTurret.shootTime = now + HEALER_SHOOT_INTERVAL;
+			this.healerTurret.shootTime = now + HEALER_SHOOT_INTERVAL * this.reloadMul;
 		}
 		for (const gs of this.healerTurret.gunStates) {
 			gs.motion -= RECOIL_SPRING * gs.position;
@@ -148,7 +174,7 @@ export class Siege {
 		const now = performance.now();
 		if (now > this.shootTime) {
 			this.shoot();
-			this.shootTime = now + SHOOT_INTERVAL;
+			this.shootTime = now + SHOOT_INTERVAL * this.reloadMul;
 		}
 		this.updateHealerTurret(now);
 		if (this.health < this.maxHealth) this.health = Math.min(this.maxHealth, this.health + REGEN_PER_FRAME);
@@ -169,8 +195,8 @@ export class Siege {
 	shoot() {
 		// Mount is inset by 0.78 tank-radius inside the body, then barrel extends outward.
 		const tipDist = (this.size - BARREL_TANK_SIZE * MOUNT_INSET_FACTOR) + TRAP_TIP_OFFSET * BARREL_TANK_SIZE;
-		for (let i = 0; i < BARREL_COUNT; i++) {
-			const a = this.angle + (i / BARREL_COUNT) * Math.PI * 2;
+		for (let i = 0; i < this.trapCount; i++) {
+			const a = this.angle + (i / this.trapCount) * Math.PI * 2;
 			const tipX = this.pos.x + Math.cos(a) * tipDist;
 			const tipY = this.pos.y + Math.sin(a) * tipDist;
 			this.bullets.push(new Bullet(new Vec2(tipX, tipY), a, this, SIEGE_TRAP_SHOOT, 0.7, 1, SIEGE_TRAP_BULLET_RADIUS));
@@ -226,9 +252,9 @@ export class Siege {
 		const noseTipHalfW = noseBaseHalfW * TRAP_NOSE_ASPECT;
 		// Mount inset so the barrel sticks out only ~half its previous protrusion.
 		const mountInset = (this.size - BARREL_TANK_SIZE * MOUNT_INSET_FACTOR) * sc;
-		for (let i = 0; i < BARREL_COUNT; i++) {
+		for (let i = 0; i < this.trapCount; i++) {
 			ctx.save();
-			ctx.rotate((i / BARREL_COUNT) * Math.PI * 2);
+			ctx.rotate((i / this.trapCount) * Math.PI * 2);
 			const recoilOffset = this.gunStates[i].position * BARREL_TANK_SIZE * sc;
 			ctx.translate(mountInset - recoilOffset, 0);
 			// Body section
@@ -284,9 +310,9 @@ export class Siege {
 		ctx.lineWidth = lw;
 		ctx.lineJoin = "round";
 		ctx.lineCap = "round";
-		for (let i = 0; i < 3; i++) {
+		for (let i = 0; i < this.healerCount; i++) {
 			ctx.save();
-			ctx.rotate((i / 3) * Math.PI * 2);
+			ctx.rotate((i / this.healerCount) * Math.PI * 2);
 			const recoil = this.healerTurret.gunStates[i].position * healerUnit;
 			ctx.translate(-recoil, 0);
 			drawSharpPolygon(ctx, [

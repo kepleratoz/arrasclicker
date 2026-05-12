@@ -3,6 +3,7 @@ import { Button } from "./button.js";
 import { game } from "./game.js";
 import { mouse, keys } from "./input.js";
 import { Shape, Sentry, makeShapeData, TYPE_NAMES } from "./shape.js";
+import { Siege } from "./siege.js";
 import { resetGame } from "./save.js";
 import { Vec2 } from "./utils.js";
 import { drawText } from "./render.js";
@@ -81,6 +82,23 @@ const actions = [
 		run: () => { game.shapes.length = 0; } },
 	{ label: "Clear All Polygons",
 		run: () => { for (let i = game.shapes.length - 1; i >= 0; --i) if (!game.shapes[i].isSentry) game.shapes.splice(i, 1); } },
+	{ label: "Clear Mobs",
+		run: () => { for (let i = game.shapes.length - 1; i >= 0; --i) if (game.shapes[i].isSentry) game.shapes.splice(i, 1); } },
+	{ label: () => game.sieges.length === 0 ? "Sanctuary: OFF" : "Sanctuary: Tier " + game.sieges[0].tier,
+		run: () => {
+			if (game.sieges.length === 0) {
+				game.sieges.push(new Siege(1));
+			} else if (game.sieges[0].tier === 1) {
+				game.sieges.length = 0;
+				game.sieges.push(new Siege(2));
+			} else {
+				game.sieges.length = 0;
+			}
+		} },
+	{ label: "Max Out Tanks",
+		run: () => { for (const t of game.tanks) t.maxOutLevel(); } },
+	{ label: "Revive All",
+		run: () => { for (const t of game.tanks) t.reviveImmediately(); } },
 ];
 
 const toggleButton = new Button(() => { panelOpen = !panelOpen; }, DEBUG_COLOR);
@@ -89,6 +107,7 @@ const spawnModeBtn = new Button(() => setMode("spawn"), MODE_COLOR);
 const upgradeModeBtn = new Button(() => setMode("upgrade"), MODE_COLOR);
 const editionModeBtn = new Button(() => setMode("edition"), MODE_COLOR);
 const damageModeBtn = new Button(() => setMode("damage"), MODE_COLOR);
+const resetTankModeBtn = new Button(() => setMode("resetTank"), MODE_COLOR);
 const resetButton = new Button(handleReset, "#222222");
 let panelOpen = false;
 
@@ -166,6 +185,22 @@ function handleDamageMode() {
 	if (mouse.leftClick) damageEntityUnderMouse();
 }
 
+function handleResetTankMode() {
+	if (keys.justPressed.has("Escape")) { game.debugMode = null; return; }
+	if (!mouse.leftClick) return;
+	const s = screenScale();
+	// Pick any tank (alive or dead) under the cursor — tankUnderMouse skips corpses,
+	// so we duplicate the radius test inline.
+	for (const t of game.tanks) {
+		const dx = mouse.x - t.pos.x * s;
+		const dy = mouse.y - t.pos.y * s;
+		if (Math.sqrt(dx * dx + dy * dy) < t.size * s) {
+			t.resetUpgrades();
+			return;
+		}
+	}
+}
+
 function applyEditionKey(sel, n) {
 	if (n > 6) return;
 	const rarity = n === 6 ? 4 : n - 2; // 1=common(-1), 2=shiny(0), 3=legendary(1), 4=shadow(2), 5=ultra(3), 6=ethereal(4)
@@ -183,6 +218,7 @@ export function updateDebug() {
 	else if (game.debugMode === "upgrade") handleSelectMode(applyUpgradeKey);
 	else if (game.debugMode === "edition") handleSelectMode(applyEditionKey);
 	else if (game.debugMode === "damage") handleDamageMode();
+	else if (game.debugMode === "resetTank") handleResetTankMode();
 }
 
 let resetClicks = 0;
@@ -223,6 +259,8 @@ export function renderDebugPanel(ctx) {
 		editionModeBtn.render(ctx, x, y, w, h, game.debugMode === "edition" ? "Edition Mode ✓" : "Edition Mode", false);
 		y += h + 4 * s;
 		damageModeBtn.render(ctx, x, y, w, h, game.debugMode === "damage" ? "Damage Mode ✓" : "Damage Mode", false);
+		y += h + 4 * s;
+		resetTankModeBtn.render(ctx, x, y, w, h, game.debugMode === "resetTank" ? "Reset Tank ✓" : "Reset Tank", false);
 		y += h + 12 * s;
 		resetButton.render(ctx, x, y, w, h, resetLabel(), false);
 	}
@@ -234,6 +272,8 @@ export function renderDebugPanel(ctx) {
 			? "UPGRADE MODE — click shape, press 1-5 (tier), ESC to cancel"
 			: game.debugMode === "damage"
 			? "DAMAGE MODE — click any entity to deal 1 damage, ESC to cancel"
+			: game.debugMode === "resetTank"
+			? "RESET TANK MODE — click a tank to wipe its upgrades, ESC to cancel"
 			: "EDITION MODE — click shape, press 1-6 (rarity, 6=Ethereal), ESC to cancel";
 		drawText(ctx, banner, game.width / 2, 60 * s, false, true, true, 22 * s);
 		if ((game.debugMode === "upgrade" || game.debugMode === "edition") && game.debugSelectedShape && !game.debugSelectedShape.isDead()) {

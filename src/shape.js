@@ -270,7 +270,7 @@ const SENTRY_TURN_RATE = 0.08;
 // OSA Class.sentry BODY: { DAMAGE: base.DAMAGE = 3, SPEED: 0.5·base.SPEED, HEALTH: 0.3·base.HEALTH }.
 const SENTRY_BODY_DAMAGE = 3;
 const SENTRY_MOVE_SPEED = 0.6;       // ≈ 0.5 × our BASE_TANK_SPEED (1.2), mirroring OSA's 0.5·base.SPEED.
-const SENTRY_ORBIT_RADIUS = 320;     // world units from the chosen sanctuary's center.
+const SENTRY_ORBIT_RADIUS = 368;     // world units from the chosen sanctuary's center (+15%).
 const SENTRY_RADIAL_CORRECTION = 0.04;  // strength of radial pull-toward-orbit-radius.
 const SENTRY_RECOIL_IMPULSE = 0.18;
 const SENTRY_RECOIL_SPRING = 0.2;
@@ -323,6 +323,7 @@ export class Sentry extends Shape {
 		this.gunState = { gunPosition: 0, gunMotion: 0 };
 		this.velocity = new Vec2();
 		this.orbitDir = Math.random() < 0.5 ? 1 : -1;   // CW or CCW around the sanctuary.
+		this.angle = 0;          // body facing; updated each frame to follow velocity.
 		this.isSentry = true;   // marker for Tank distance-keeping logic.
 		this.damageType = 0;    // not food — buffVsFood doesn't apply to sentries.
 		this.damage = SENTRY_BODY_DAMAGE;  // body damage (when bullets bump into the triangle).
@@ -390,6 +391,10 @@ export class Sentry extends Shape {
 			this.velocity.x = tanX * SENTRY_MOVE_SPEED + radX * radialError * SENTRY_RADIAL_CORRECTION;
 			this.velocity.y = tanY * SENTRY_MOVE_SPEED + radY * radialError * SENTRY_RADIAL_CORRECTION;
 			this.pos.add(this.velocity);
+			// Body faces the direction it's moving in.
+			if (this.velocity.x !== 0 || this.velocity.y !== 0) {
+				this.angle = Math.atan2(this.velocity.y, this.velocity.x);
+			}
 		}
 		// Auto-cannon target: nearest live tank in range, falling back to the chosen sanctuary.
 		let nearest = null;
@@ -449,7 +454,9 @@ export class Sentry extends Shape {
 		ctx.beginPath();
 		const r = this.drawSize * sizeMul * sc;
 		for (let i = 0; i < 3; i++) {
-			const a = -Math.PI / 2 + (i / 3) * Math.PI * 2;
+			// Vertex 0 is the "forward" tip; rotates with this.angle so the body points
+			// in the direction the sentry is moving.
+			const a = this.angle + (i / 3) * Math.PI * 2;
 			const x = cx + Math.cos(a) * r;
 			const y = cy + Math.sin(a) * r;
 			if (i === 0) ctx.moveTo(x, y);

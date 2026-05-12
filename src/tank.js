@@ -42,6 +42,18 @@ export const TANK_UPGRADE_SPECS = [
 	{ key: "speed",       label: "Move Speed",      max: 10, baseCost: 1e14, growth: 2,  color: "#3ca4cb" },
 ];
 export function tankUpgradeCost(spec, level) { return spec.baseCost * Math.pow(spec.growth, level); }
+// Total skill points spent across every per-tank upgrade.
+export function tankSkillPointsSpent(tank) {
+	let n = 0;
+	for (const spec of TANK_UPGRADE_SPECS) n += tank.upgrades?.[spec.key] ?? 0;
+	return n;
+}
+// Cap is min(42, tank.level): a tank can never exceed 42 invested points, and below
+// level 42 the cap is the tank's own level — one point per level matches OSA's flow.
+export function tankSkillPointsCap(tank) { return Math.min(42, Math.max(0, tank.level | 0)); }
+export function tankSkillPointsRemaining(tank) {
+	return Math.max(0, tankSkillPointsCap(tank) - tankSkillPointsSpent(tank));
+}
 function defaultUpgrades() {
 	const o = {};
 	for (const spec of TANK_UPGRADE_SPECS) o[spec.key] = 0;
@@ -153,15 +165,26 @@ export class Bullet {
 		this.life = tankBulletLife() * rangeMul * (this.isTrap ? 3 : 1);
 		this.damage = (shootCfg.ignoreUpgradeDamage ? 1 : tankBaseDamage(tank)) * damageMul;
 		this.penetration = (shootCfg.penetration ?? tankBulletPen(tank));
-		// Bullets inherit the firing tank's resist (RESIST + brst) so the OSA resistDiff
-		// term works against both shapes and other entities. Sentries/Sanctuary shooters
-		// don't have upgrade tracks, so up() returns 0 and resist comes out near 0.
-		this.resist = (tank && tank.upgrades) ? tankResist(tank) : 0;
+		// Bullets inherit the firing entity's resist. For Tanks (which have an upgrade
+		// track), recompute from skill. For Sanctuary / Sentry (no upgrade track but a
+		// hardcoded `resist` field), use that directly — otherwise default to 0.
+		this.resist = tank?.upgrades ? tankResist(tank) : (tank?.resist ?? 0);
 		this.health = (shootCfg.ignoreUpgradeHealth ? 5 : tankBulletHealth(tank)) * healthMul;
 		this.maxHealth = this.health;
 		this.isHeal = !!shootCfg.isHeal;
 		this.healAmount = shootCfg.healAmount ?? 0;
 		this.targetsTanks = !!shootCfg.targetsTanks;
+		this.ignoreFood = !!shootCfg.ignoreFood;   // pass through `damageType === 1` shapes (polygons).
+		this.isDrone = !!shootCfg.isDrone;
+		if (this.isDrone) {
+			this.life = Infinity;                  // drones don't expire from age.
+			this.droneMaxSpeed = shootCfg.droneMaxSpeed ?? 3;
+			this.droneAccel = shootCfg.droneAccel ?? 0.12;
+			this.droneRange = shootCfg.droneRange ?? 600;
+			this.droneOrbitRadius = shootCfg.droneOrbitRadius ?? 60;     // tight halo around master.
+			this.droneOrbitSpeed = shootCfg.droneOrbitSpeed ?? 1.5;
+			this.orbitDir = Math.random() < 0.5 ? 1 : -1;  // CW/CCW around master at random.
+		}
 		// OSA's `buffVsFood`: ×3 damage to entities tagged as food (damageType === 1).
 		// Inherited from the shooter so all tank-fired bullets get it automatically.
 		this.buffVsFood = !!(shootCfg.buffVsFood || (tank && tank.buffVsFood));
@@ -180,10 +203,100 @@ export class Bullet {
 		if (this.health <= 0) this.startDying();
 	}
 	update() {
+		if (this.isDrone) {
+			const masterAlive = this.tank && !(this.tank.isDead && this.tank.isDead());
+			const cmd = this.tank?.droneControl;
+			// Manual drone command (controlled Director): attract/repel from cursor.
+			if (cmd && cmd.mode === "attract") {
+				const ax = cmd.x - this.pos.x;
+				const ay = cmd.y - this.pos.y;
+				const targetAngle = Math.atan2(ay, ax);
+				let delta = targetAngle - this.angle;
+				while (delta > Math.PI) delta -= Math.PI * 2;
+				while (delta < -Math.PI) delta += Math.PI * 2;
+				this.angle += Math.max(-MAX_TURN_PER_FRAME, Math.min(MAX_TURN_PER_FRAME, delta));
+				this.velocity.x += Math.cos(this.angle) * this.droneAccel;
+				this.velocity.y += Math.sin(this.angle) * this.droneAccel;
+			} else if (cmd && cmd.mode === "repel") {
+				const dx = this.pos.x - cmd.x;
+				const dy = this.pos.y - cmd.y;
+				const dist = Math.max(0.001, Math.sqrt(dx * dx + dy * dy));
+				// Stronger push close, falls off past 400 units.
+				const falloff = Math.max(0, 1 - dist / 400);
+				const accelMul = (1 + falloff * 1.5);
+				const fleeAngle = Math.atan2(dy, dx);
+				let delta = fleeAngle - this.angle;
+				while (delta > Math.PI) delta -= Math.PI * 2;
+				while (delta < -Math.PI) delta += Math.PI * 2;
+				this.angle += Math.max(-MAX_TURN_PER_FRAME, Math.min(MAX_TURN_PER_FRAME, delta));
+				this.velocity.x += Math.cos(this.angle) * this.droneAccel * accelMul;
+				this.velocity.y += Math.sin(this.angle) * this.droneAccel * accelMul;
+			} else {
+			// Inherit target from the master — drones chase whatever the Director is locked on to.
+			const target = (this.tank && this.tank.target && !this.tank.target.isDead()) ? this.tank.target : null;
+			if (target) {
+				// Chase mode: smoothToTarget turn, then accelerate along the drone's facing.
+				const ax = target.pos.x - this.pos.x;
+				const ay = target.pos.y - this.pos.y;
+				const targetAngle = Math.atan2(ay, ax);
+				let delta = targetAngle - this.angle;
+				while (delta > Math.PI) delta -= Math.PI * 2;
+				while (delta < -Math.PI) delta += Math.PI * 2;
+				this.angle += Math.max(-MAX_TURN_PER_FRAME, Math.min(MAX_TURN_PER_FRAME, delta));
+				this.velocity.x += Math.cos(this.angle) * this.droneAccel;
+				this.velocity.y += Math.sin(this.angle) * this.droneAccel;
+			} else if (masterAlive) {
+				// OSA "hangOutAroundMaster": orbit the Director at droneOrbitRadius.
+				const dx = this.pos.x - this.tank.pos.x;
+				const dy = this.pos.y - this.tank.pos.y;
+				const dist = Math.max(0.001, Math.sqrt(dx * dx + dy * dy));
+				const radialError = dist - this.droneOrbitRadius;
+				const tanX = -dy / dist * this.orbitDir;
+				const tanY = dx / dist * this.orbitDir;
+				const radX = -dx / dist;
+				const radY = -dy / dist;
+				const desiredVx = tanX * this.droneOrbitSpeed + radX * radialError * 0.05;
+				const desiredVy = tanY * this.droneOrbitSpeed + radY * radialError * 0.05;
+				// Steer velocity toward the desired orbit velocity instead of snapping,
+				// so the entry into orbit looks smooth.
+				this.velocity.x += (desiredVx - this.velocity.x) * 0.2;
+				this.velocity.y += (desiredVy - this.velocity.y) * 0.2;
+				// Smooth-turn the body to face the orbit-tangent direction.
+				const orbitAngle = Math.atan2(desiredVy, desiredVx);
+				let delta = orbitAngle - this.angle;
+				while (delta > Math.PI) delta -= Math.PI * 2;
+				while (delta < -Math.PI) delta += Math.PI * 2;
+				this.angle += Math.max(-MAX_TURN_PER_FRAME, Math.min(MAX_TURN_PER_FRAME, delta));
+			}
+			}  // end of manual-cmd `else` branch (auto target/orbit).
+			// Push apart from other drones so they don't stack on the same target.
+			if (this.tank && this.tank.bullets) {
+				for (const other of this.tank.bullets) {
+					if (other === this || !other.isDrone || other.dying) continue;
+					const dx = this.pos.x - other.pos.x;
+					const dy = this.pos.y - other.pos.y;
+					const distSq = dx * dx + dy * dy;
+					const minDist = this.size + other.size;
+					if (distSq < minDist * minDist && distSq > 0.001) {
+						const dist = Math.sqrt(distSq);
+						const overlap = (minDist - dist) / dist;
+						this.velocity.x += dx * overlap * 0.25;
+						this.velocity.y += dy * overlap * 0.25;
+					}
+				}
+			}
+			const sp = this.velocity.length();
+			if (sp > this.droneMaxSpeed) this.velocity.mulVal(this.droneMaxSpeed / sp);
+		}
 		this.pos.add(this.velocity);
 		if (this.isTrap) {
 			this.velocity.mulVal(0.97);
 			this.angle += this.velocity.length() * 0.04;
+		} else if (this.isDrone) {
+			// Drones are repelled from the arena edge — same logic shapes/tanks use.
+			const edgeForce = game.room.applyForce(this.pos, this.size, 0.05);
+			this.pos.add(edgeForce);
+			this.velocity.mulVal(0.95);    // stronger friction so drones don't drift far after losing target.
 		}
 		if (!this.dying && this.health < this.maxHealth) {
 			this.health = Math.min(this.maxHealth, this.health + REGEN_PER_FRAME);
@@ -251,6 +364,7 @@ export class Bullet {
 		// the depth term naturally tapers each frame's damage as the bullet sinks in.
 		for (const shape of game.shapes) {
 			if (shape.isDead() || !tankCanTarget(shape)) continue;
+			if (this.ignoreFood && shape.damageType === 1) continue;
 			const dx = shape.pos.x - this.pos.x;
 			const dy = shape.pos.y - this.pos.y;
 			const dist = Math.max(0.001, Math.sqrt(dx * dx + dy * dy));
@@ -292,6 +406,9 @@ export class Bullet {
 		ctx.lineWidth = 4 * sc;
 		if (this.isTrap) {
 			drawTrap(ctx, this.pos.x * sc, this.pos.y * sc, this.size * sizeMul * sc, this.angle);
+		} else if (this.isDrone) {
+			// OSA Class.drone SHAPE = 3 (triangle), oriented along motion.
+			drawPolygon(ctx, this.pos.x, this.pos.y, this.size * sizeMul, this.angle, 3);
 		} else {
 			drawPolygon(ctx, this.pos.x, this.pos.y, this.size * sizeMul, 0, 0);
 		}
@@ -349,7 +466,9 @@ export class Tank {
 		this.setClass("basic");
 		this.recomputeSize();
 		this.upgrades = defaultUpgrades();
-		this.buffVsFood = true;      // all tank-fired bullets deal ×3 damage to food shapes.
+		// buffVsFood machinery (Bullet.buffVsFood check, Shape.damageType tagging) is kept
+		// for future use. Disabled on tanks for now so polygon damage isn't auto-tripled.
+		this.buffVsFood = false;
 		this.maxHealth = tankMaxHealth(this);
 		this.health = this.maxHealth;
 		this.maxShield = tankMaxShield(this);
@@ -488,6 +607,27 @@ export class Tank {
 	}
 	xpProgress() { return this.xp - this.deduction; }
 	xpNeeded() { return this.levelUpScore - this.deduction; }
+	maxOutLevel() {
+		this.level = 42;
+		this.xp = 0;
+		this.deduction = 0;
+		this.levelUpScore = scoreForLevel(43);
+		this.recomputeSize();
+		this.maxHealth = tankMaxHealth(this);
+		this.health = this.maxHealth;
+		this.maxShield = tankMaxShield(this);
+		this.shield = this.maxShield;
+	}
+	reviveImmediately() {
+		if (this.isDead()) this.respawn();
+	}
+	resetUpgrades() {
+		this.upgrades = defaultUpgrades();
+		this.maxHealth = tankMaxHealth(this);
+		this.health = Math.min(this.health, this.maxHealth);
+		this.maxShield = tankMaxShield(this);
+		this.shield = Math.min(this.shield, this.maxShield);
+	}
 	findNearest(claimed) {
 		let best = null;
 		let bestDistSq = Infinity;
@@ -552,7 +692,12 @@ export class Tank {
 			}
 			this.target = null;
 			target = mouse.left ? this : null;
+			// Drone-command override (Director): left = attract, right = repel, else auto.
+			if (mouse.left) this.droneControl = { mode: "attract", x: mouseWorldX, y: mouseWorldY };
+			else if (mouse.right) this.droneControl = { mode: "repel", x: mouseWorldX, y: mouseWorldY };
+			else this.droneControl = null;
 		} else {
+			this.droneControl = null;
 			const claimed = new Set();
 			for (const t of game.tanks) {
 				if (t === this) break;
@@ -569,7 +714,8 @@ export class Tank {
 				while (delta < -Math.PI) delta += Math.PI * 2;
 				this.angle += Math.max(-MAX_TURN_PER_FRAME, Math.min(MAX_TURN_PER_FRAME, delta));
 				const dist = Math.sqrt(dx * dx + dy * dy);
-				const keepout = target.isSentry ? 220 : 30;
+				const def = TANK_DEFS[this.defKey];
+				const keepout = target.isSentry ? 220 : (def.keepout ?? 30);
 				const desired = Math.max(60, target.size + this.size + keepout);
 				const speed = tankSpeed(this);
 				if (dist > desired) {
@@ -598,10 +744,41 @@ export class Tank {
 		const edgeForce = game.room.applyForce(this.pos, this.size, 0.05);
 		this.pos.add(edgeForce);
 		this.velocity.mulVal(0.92);
+		// Push apart from other live tanks so they don't stack. Each side moves half
+		// the overlap; both tanks run this loop, giving full separation per frame.
+		for (const other of game.tanks) {
+			if (other === this || (other.isDead && other.isDead())) continue;
+			const dx = this.pos.x - other.pos.x;
+			const dy = this.pos.y - other.pos.y;
+			const distSq = dx * dx + dy * dy;
+			const minDist = this.size + other.size;
+			if (distSq < minDist * minDist && distSq > 0.001) {
+				const dist = Math.sqrt(distSq);
+				const overlap = minDist - dist;
+				this.pos.x += (dx / dist) * overlap * 0.5;
+				this.pos.y += (dy / dist) * overlap * 0.5;
+			}
+		}
 		for (let i = this.bullets.length - 1; i >= 0; --i) {
 			this.bullets[i].update();
 			if (this.bullets[i].dead) this.bullets.splice(i, 1);
 		}
+	}
+	_fireGun(gun, gs, now, interval) {
+		const cosA = Math.cos(this.angle);
+		const sinA = Math.sin(this.angle);
+		const mountX = this.pos.x + (gun.x * cosA - gun.y * sinA) * this.size;
+		const mountY = this.pos.y + (gun.x * sinA + gun.y * cosA) * this.size;
+		const barrelDir = this.angle + (gun.angle ?? 0);
+		const tipX = mountX + Math.cos(barrelDir) * gun.length * this.size;
+		const tipY = mountY + Math.sin(barrelDir) * gun.length * this.size;
+		const sprayRad = (gun.shoot.spray ?? 0) * 0.12;
+		const shudderAmt = (gun.shoot.shudder ?? 0) * 0.12;
+		const fireAngle = barrelDir + (Math.random() - 0.5) * sprayRad;
+		const shudderMul = 1 + (Math.random() - 0.5) * shudderAmt;
+		this.bullets.push(new Bullet(new Vec2(tipX, tipY), fireAngle, this, gun.shoot, gun.width, shudderMul));
+		gs.shootTime = now + interval;
+		gs.gunMotion += RECOIL_IMPULSE;
 	}
 	shootGuns(target) {
 		const def = TANK_DEFS[this.defKey];
@@ -616,21 +793,22 @@ export class Tank {
 					gs.shootTime = now + gs.initialDelay * interval;
 					gs.delayInitialized = true;
 				}
-				if (target && now > gs.shootTime) {
-					const cosA = Math.cos(this.angle);
-					const sinA = Math.sin(this.angle);
-					const mountX = this.pos.x + (gun.x * cosA - gun.y * sinA) * this.size;
-					const mountY = this.pos.y + (gun.x * sinA + gun.y * cosA) * this.size;
-					const barrelDir = this.angle + (gun.angle ?? 0);
-					const tipX = mountX + Math.cos(barrelDir) * gun.length * this.size;
-					const tipY = mountY + Math.sin(barrelDir) * gun.length * this.size;
-					const sprayRad = (gun.shoot.spray ?? 0) * 0.12;
-					const shudderAmt = (gun.shoot.shudder ?? 0) * 0.12;
-					const fireAngle = barrelDir + (Math.random() - 0.5) * sprayRad;
-					const shudderMul = 1 + (Math.random() - 0.5) * shudderAmt;
-					this.bullets.push(new Bullet(new Vec2(tipX, tipY), fireAngle, this, gun.shoot, gun.width, shudderMul));
-					gs.shootTime = now + interval;
-					gs.gunMotion += RECOIL_IMPULSE;
+				// AutoFire guns (OSA AUTOFIRE: true, used by Director) fire without a target.
+				const canFire = target || gun.shoot.autoFire;
+				if (canFire && now > gs.shootTime) {
+					// Drone-spawning guns are capped at maxChildren — OSA WAIT_TO_CYCLE: true,
+					// the reload pauses until a drone dies, so don't advance shootTime here.
+					if (gun.shoot.isDrone && gun.shoot.maxChildren != null) {
+						let count = 0;
+						for (const b of this.bullets) if (b.isDrone) count++;
+						if (count >= gun.shoot.maxChildren) {
+							// no-op: skip shooting and don't reset shootTime.
+						} else {
+							this._fireGun(gun, gs, now, interval);
+						}
+					} else {
+						this._fireGun(gun, gs, now, interval);
+					}
 				}
 			}
 			gs.gunMotion -= RECOIL_SPRING * gs.gunPosition;
@@ -825,6 +1003,12 @@ export function tankUnderMouse() {
 }
 
 export function syncTanks() {
+	// Defensive: a save can have `state.tanks` snapshotted but `state.tankCount` mismatched
+	// (older saves, partial writes, etc.). Pull tankCount up to the snapshot's length so
+	// the loop below actually rebuilds every saved tank.
+	if (Array.isArray(state.tanks) && state.tanks.length > (state.tankCount | 0)) {
+		state.tankCount = state.tanks.length;
+	}
 	while (game.tanks.length < state.tankCount) {
 		const cx = (game.room.minX + game.room.maxX) / 2;
 		const cy = (game.room.minY + game.room.maxY) / 2;
