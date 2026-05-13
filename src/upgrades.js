@@ -6,6 +6,10 @@ import { syncTanks } from "./tank.js";
 
 const RARITY_TIER_NAMES = ["Normal", "Shiny", "Legendary", "Shadow", "Rainbow"];
 const RARITY_TIER_COLORS = ["#bbbbbb", colors.shiny, colors.legendary, colors.shadow, "#ff5cd4"];
+// Force-target type slider (parallel to the rarity cap). The slider index maps to
+// state.tankForceTypeCap as (index - 1), so 0=Off (-1), 1=Egg (0), … 5=Hexagon (4).
+const FORCE_TYPE_NAMES  = ["Off", "Egg", "Square", "Triangle", "Pentagon", "Hexagon"];
+const FORCE_TYPE_COLORS = ["#bbbbbb", colors.egg, colors.square, colors.triangle, colors.pentagon, colors.hexagon];
 
 // ---------- Egg ----------
 class EggEvolution {
@@ -279,7 +283,24 @@ class TankRarityCap {
 	getSecondary() { return ""; }
 	isDisabled() { return false; }
 }
-export const tankUpgrades = [new TankRarityCap()];
+class TankForceType {
+	// Slider index 0 = Off; 1..5 maps to force-cap shape type 0..4.
+	button = new SliderButton(
+		FORCE_TYPE_NAMES,
+		() => (state.tankForceTypeCap ?? -1) + 1,
+		(idx) => { state.tankForceTypeCap = idx - 1; },
+		TANK_COLOR,
+		FORCE_TYPE_COLORS,
+	);
+	getLabel() {
+		const cap = state.tankForceTypeCap ?? -1;
+		if (cap < 0) return "Force-Target Shapes: Off";
+		return "Force-Target Shapes: " + FORCE_TYPE_NAMES[cap + 1] + " and below (ignores rarity cap)";
+	}
+	getSecondary() { return ""; }
+	isDisabled() { return false; }
+}
+export const tankUpgrades = [new TankRarityCap(), new TankForceType()];
 
 class UnlockShadow {
 	button = new Button(() => { state.score -= this.cost(); state.rarityCap = Math.max(state.rarityCap, 2); }, colors.shadow, "rgba(34,34,34,0.4)");

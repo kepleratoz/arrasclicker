@@ -15,6 +15,7 @@ export const state = {
 	tankCount: 0,
 	clickDamageUpgrades: 0,
 	tankRarityCap: 4,
+	tankForceTypeCap: -1,        // -1 = off; 0..4 = always-target Egg..Hexagon regardless of rarity.
 	tanks: [],
 	shapeDeathAnimEnabled: true,
 	bulletDeathAnimEnabled: true,

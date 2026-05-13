@@ -133,6 +133,7 @@ export class Shape {
 		this.isGold = true;
 		this.spawnTime = performance.now();
 		this.evoTime = Infinity;   // belt-and-suspenders: never evolves.
+		this._auraPhase = Math.random() * Math.PI * 2;   // de-syncs the pulsing aura between gold shapes.
 	}
 	setType(data) {
 		this.fillStyle = data.color;
@@ -280,6 +281,23 @@ export class Shape {
 		}
 		ctx.globalAlpha = fade * visibilityAlpha;
 		if (ctx.globalAlpha <= 0) { ctx.globalAlpha = 1; return; }
+		// Pulsing translucent aura behind gold shapes — the OSA portal-ring effect.
+		// OSA portalAura: ALPHA 0.4, SIZE oscillates 32↔45 by 1.2/tick on a SIZE-25 portal
+		// (≈1.28×→1.8× the source radius, ≈1.4 Hz). Drawn first so the shape sits on top.
+		if (this.isGold && !this.dying) {
+			const sc = game.scale * game.room.fov;
+			const baseR = this.drawSize * sizeMul * sc;
+			const auraR = baseR * (1.54 + 0.26 * Math.sin(Date.now() * 0.009 + this._auraPhase));
+			ctx.globalAlpha = 0.4 * fade;
+			ctx.fillStyle = darken(colors.square, colorScale);
+			ctx.strokeStyle = darken(darken(colors.square), colorScale);
+			ctx.lineWidth = 3 * sc;
+			ctx.beginPath();
+			ctx.arc(this.pos.x * sc, this.pos.y * sc, auraR, 0, Math.PI * 2);
+			ctx.fill();
+			ctx.stroke();
+			ctx.globalAlpha = fade * visibilityAlpha;
+		}
 		if (this.rarity === 3) {
 			const hue = (Date.now() * 0.1) % 360;   // halved cycle speed.
 			const fillL = Math.round(60 * colorScale);

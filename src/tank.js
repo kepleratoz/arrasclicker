@@ -69,7 +69,16 @@ function up(tank, key) { return tank?.upgrades?.[key] ?? 0; }
 const TANK_SKILL_CAPS = Object.fromEntries(TANK_UPGRADE_SPECS.map(s => [s.key, s.max]));
 function tankSkill(tank, key) { return osaCurve(up(tank, key), TANK_SKILL_CAPS[key] ?? 10); }
 function tankShootInterval(tank) { return BASE_SHOOT_INTERVAL * Math.pow(0.5, tankSkill(tank, "reload")) * goldTankReloadMul(); }
-function tankCanTarget(shape) { return !shape.isGold && shape.rarity < state.tankRarityCap - 1; }
+function tankCanTarget(shape) {
+	if (shape.isGold) return false;
+	// Two independent gates:
+	//   • Rarity cap (`state.tankRarityCap`): blocks high-rarity shapes the player wants
+	//     to leave alone (e.g. "don't target Legendaries and above").
+	//   • Force-type cap (`state.tankForceTypeCap`, -1 = off): unconditionally allows
+	//     any shape up to that type, overriding the rarity gate.
+	if ((state.tankForceTypeCap ?? -1) >= 0 && shape.type <= state.tankForceTypeCap) return true;
+	return shape.rarity < state.tankRarityCap - 1;
+}
 function tankCanLockOn(shape) { return tankCanTarget(shape) && shape.rarity !== 4; }
 function tankDamageMul(shape) { return shape.rarity === 4 ? 0.1 : 1; }
 function tankBaseDamage(tank) { return osaApply(3, tankSkill(tank, "damage")) * goldTankDamageMul(); }
