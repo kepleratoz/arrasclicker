@@ -246,7 +246,20 @@ class HexagonBuff {
 	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
 	isDisabled() { return state.score < this.cost() || this.max(); }
 }
-export const hexagonUpgrades = [new HexagonEvolution(), new HexagonEvoTime(), new HexagonBuff()];
+class UnlockRainbow {
+	button = new Button(() => { state.score -= this.cost(); state.rarityCap = Math.max(state.rarityCap, 3); }, "#ff5cd4");
+	getLabel() { return "Unlock Rainbow Rarity"; }
+	cost() { return 1e19; }
+	// Roll condition: rarity buff must be high enough that rainbow can actually roll.
+	requirement() { return state.rarityCap >= 2 && shapeRarityFromBuff(state.shapeRarityBuff) > 5; }
+	getSecondary() {
+		if (state.rarityCap >= 3) return "UNLOCKED";
+		if (!this.requirement()) return state.rarityCap < 2 ? "Unlock shadow first" : "Increase rare shapes chance further";
+		return formatNumber(this.cost()) + " score. Rainbow-tier shapes.";
+	}
+	isDisabled() { return state.rarityCap >= 3 || !this.requirement() || state.score < this.cost(); }
+}
+export const hexagonUpgrades = [new HexagonEvolution(), new HexagonEvoTime(), new HexagonBuff(), new UnlockRainbow()];
 
 // ---------- Tank ----------
 const TANK_COLOR = "#58b0d0";

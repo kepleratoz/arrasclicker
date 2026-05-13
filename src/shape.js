@@ -4,6 +4,20 @@ import { mouse } from "./input.js";
 import { drawPolygon, drawHealthBar } from "./render.js";
 import { game } from "./game.js";
 import { Bullet } from "./tank.js";
+import { grantGoldEffect, goldRareChanceMul, goldClickDamageMul, goldClickScoreMul, goldScoreMul } from "./goldEffects.js";
+
+// Gold-shape constants.
+const GOLD_CHANCE = 1 / 700;       // fixed: 1 in 700 spawned shapes is gold.
+const GOLD_DECAY_MS = 60000;       // gold shapes decay 1 minute after spawning.
+const GOLD_HEALTH_MUL = 5;         // gold shapes have 5× base health.
+// Eligible gold types — Egg always, the rest gated on being unlocked. Square (1) has no effect.
+function eligibleGoldTypes() {
+	const out = [0];
+	if (state.trianglesUnlocked) out.push(2);
+	if (state.pentagonsUnlocked) out.push(3);
+	if (state.hexagonsUnlocked) out.push(4);
+	return out;
+}
 
 const LOG5 = Math.log(5);
 const DEATH_FRAMES = 18; // ~300ms at 60fps
@@ -47,9 +61,13 @@ export function makeShapeData(type, rarity, layers) {
 export function randomShapeType(typeRoll, rarityRoll, layers) {
 	let type = Math.min(4, shapeTypeFromBuff(typeRoll) | 0) - 1;
 	if (type === 3 && state.pentagonsUnlocked && Math.random() < 1 / 6) type = 4;
-	let rarity = Math.min(state.rarityCap, Math.floor(shapeRarityFromBuff(rarityRoll)) - 2);
+	// Gold "6x Rare Chance" effect makes a high roll more likely, but never raises the
+	// achievable ceiling — clamp the boosted roll to what shapeRarityBuff alone could reach.
+	const boostedRoll = Math.min(rarityRoll * goldRareChanceMul(), state.shapeRarityBuff);
+	let rarity = Math.min(state.rarityCap, Math.floor(shapeRarityFromBuff(boostedRoll)) - 2);
 	if (rarity === 1 && state.rarityCap >= 2 && Math.random() < 1 / 6) rarity = 2;
-	if (rarity === 2 && Math.random() < 1 / 25) rarity = ETHEREAL;
+	if (rarity === 2 && state.rarityCap >= 3 && Math.random() < 1 / 6) rarity = 3;   // shadow → rainbow.
+	if (rarity >= 2 && Math.random() < 1 / 25) rarity = ETHEREAL;
 	return makeShapeData(type, rarity, layers);
 }
 
@@ -72,6 +90,9 @@ export class Shape {
 		this.dying = 0;
 		this.damageType = 1;     // OSA "food" tag: tank bullets with buffVsFood get ×3 damage.
 		this.damageBlend = 0;    // OSA-style red-flash on damage; decays per frame.
+		this.isGold = false;
+		this.spawnTime = 0;      // performance.now() at spawn; gold shapes decay after GOLD_DECAY_MS.
+		this._particleTimer = 0;
 	}
 	startDying() {
 		if (this.dying) return;
@@ -85,15 +106,33 @@ export class Shape {
 			),
 		);
 		shape.layers = 1;
-		shape.setType(
-			randomShapeType(
-				Math.pow(Math.random(), 2) * state.shapeTypeBuff,
-				Math.pow(Math.random(), 5) * state.shapeRarityBuff,
-				shape.layers,
-			),
-		);
-		shape.setEvoTime();
+		if (Math.random() < GOLD_CHANCE) {
+			const types = eligibleGoldTypes();
+			shape.makeGold(types[Math.floor(Math.random() * types.length)]);
+		} else {
+			shape.setType(
+				randomShapeType(
+					Math.pow(Math.random(), 2) * state.shapeTypeBuff,
+					Math.pow(Math.random(), 5) * state.shapeRarityBuff,
+					shape.layers,
+				),
+			);
+			shape.setEvoTime();
+		}
 		return shape;
+	}
+	makeGold(type) {
+		// Build a common, single-layer shape of the gold type, then re-skin it and
+		// give it 5× health. Gold shapes never evolve.
+		this.layers = 1;
+		this.setType(makeShapeData(type, -1, 1));
+		this.fillStyle = colors.square;
+		this.strokeStyle = darken(colors.square);
+		this.maxHealth *= GOLD_HEALTH_MUL;
+		this.health = this.maxHealth;
+		this.isGold = true;
+		this.spawnTime = performance.now();
+		this.evoTime = Infinity;   // belt-and-suspenders: never evolves.
 	}
 	setType(data) {
 		this.fillStyle = data.color;
@@ -121,6 +160,7 @@ export class Shape {
 		this.size *= triangleAdjust;
 	}
 	evolve() {
+		if (this.isGold) return;   // gold shapes can't evolve.
 		this.layers += 1;
 		this.score *= 5;
 		const sides = Math.max(3, this.sides);
@@ -147,6 +187,31 @@ export class Shape {
 			this.velocity.mulVal(0.98);
 			return;
 		}
+		if (this.isGold) {
+			// Gold shapes decay 1 minute after spawning, and shoot off small gold sparkle bits.
+			if (performance.now() - this.spawnTime > GOLD_DECAY_MS) { this.startDying(); return; }
+			if (--this._particleTimer <= 0) {
+				this._particleTimer = 5;
+				// Spawn on a ring around the shape and drift inward toward its center, just
+				// like a portal's particles being pulled in. The ring scales with the shape;
+				// the speed is tuned so the particle reaches the center near the end of its
+				// fade-in (≈26 frames travel) — it's brightest right before it vanishes.
+				const a = Math.random() * Math.PI * 2;
+				const ringR = this.size * 3 + 18;
+				const sp = ringR / 26;
+				game.particles.push({
+					x: this.pos.x + Math.cos(a) * ringR,
+					y: this.pos.y + Math.sin(a) * ringR,
+					vx: -Math.cos(a) * sp,
+					vy: -Math.sin(a) * sp,
+					cx: this.pos.x,
+					cy: this.pos.y,
+					// Same radius as a fully-sized Basic bullet: TANK_SIZE(12) × maxLevelMul(2) × gunWidth(0.8) / 2 = 9.6.
+					size: 9.6,
+					age: 0,                          // fades IN (OSA portal-particle behavior).
+				});
+			}
+		}
 		if (this.layers < state.layersCaps[this.type] && performance.now() > this.evoTime) this.evolve();
 		if (this.health < this.maxHealth) this.health = Math.min(this.maxHealth, this.health + REGEN_PER_FRAME);
 		this.damageBlend *= 0.85;
@@ -159,19 +224,22 @@ export class Shape {
 			const overlap = (mouse.leftClick ? 10 : 100) + this.size * screenScale - Math.sqrt(dx * dx + dy * dy);
 			if (overlap > 0) {
 				if (mouse.leftClick) {
-					this.health -= 1 + (state.clickDamageUpgrades || 0);
+					this.health -= (1 + (state.clickDamageUpgrades || 0)) * goldClickDamageMul();
+					this.damageBlend = 1;
 					if (this.rarity === ETHEREAL && this.health > 0 && Math.random() < 0.5) {
 						this.pos.x = game.room.minX + Math.random() * game.room.maxX;
 						this.pos.y = game.room.minY + Math.random() * game.room.maxY;
 					}
 					if (this.health <= 0) {
+						if (this.isGold) grantGoldEffect(this.type);
 						this.startDying();
-						state.score += this.score;
+						const gained = Math.round(this.score * goldScoreMul() * goldClickScoreMul());
+						state.score += gained;
 						game.flyingText.push({
 							x: this.pos.x * screenScale,
 							y: this.pos.y * screenScale,
 							alpha: 1,
-							text: "+" + formatNumber(this.score),
+							text: "+" + formatNumber(gained),
 						});
 					}
 				} else {
@@ -194,7 +262,14 @@ export class Shape {
 		const cosFactor = Math.cos(Math.PI / sides);
 		const fade = this.dying ? Math.max(0, 1 - this.dying / DEATH_FRAMES) : 1;
 		const sizeMul = 1 + 0.5 * (1 - fade);
-		const colorScale = this.dying ? 1 : Math.max(0.35, this.health / this.maxHealth);
+		let colorScale = this.dying ? 1 : Math.max(0.35, this.health / this.maxHealth);
+		if (this.isGold && !this.dying) {
+			// Gold shapes darken as they age. The age-darkness and damage-darkness don't
+			// stack — render whichever is darker (the lower colorScale).
+			const ageT = Math.min(1, (performance.now() - this.spawnTime) / GOLD_DECAY_MS);
+			const ageScale = Math.max(0.35, 1 - 0.6 * ageT);
+			colorScale = Math.min(colorScale, ageScale);
+		}
 		let visibilityAlpha = 1;
 		if (this.rarity === ETHEREAL && !this.dying) {
 			const sc = game.scale * game.room.fov;
@@ -206,7 +281,7 @@ export class Shape {
 		ctx.globalAlpha = fade * visibilityAlpha;
 		if (ctx.globalAlpha <= 0) { ctx.globalAlpha = 1; return; }
 		if (this.rarity === 3) {
-			const hue = (Date.now() * 0.2) % 360;
+			const hue = (Date.now() * 0.1) % 360;   // halved cycle speed.
 			const fillL = Math.round(60 * colorScale);
 			const strokeL = Math.round(35 * colorScale);
 			ctx.fillStyle = `hsl(${hue}, 80%, ${fillL}%)`;

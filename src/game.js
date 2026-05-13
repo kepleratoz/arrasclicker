@@ -1,6 +1,13 @@
 import { state } from "./state.js";
 import { mouse, keys } from "./input.js";
-import { formatNumber } from "./utils.js";
+import { formatNumber, colors, darken } from "./utils.js";
+
+// OSA portal-particle timing: alpha climbs +0.06 per game tick (≈30 ticks/sec) up to 0.9,
+// then snaps off. At 60fps that's ≈0.03/frame, capped after ~30 frames; the particle is
+// removed once it reaches the center it's drawn to (or this many frames as a safety cap).
+const PARTICLE_FRAMES = 34;
+const PARTICLE_ALPHA_STEP = 0.03;
+const PARTICLE_ALPHA_CAP = 0.9;
 
 function bulkQuantity() {
 	if (keys.pressed.has("AltLeft") || keys.pressed.has("AltRight")) return 100;
@@ -39,6 +46,8 @@ class Game {
 		this.tanks = [];
 		this.sieges = [];
 		this.flyingText = [];
+		this.goldEffects = [];      // [{ key, label, expiry }] — temporary gold-shape buffs.
+		this.particles = [];        // [{ x, y, vx, vy, size, dying }] — gold-shape sparkle bits.
 		// `room`, `tabs`, `currentTab` are wired up in init() after circular imports settle.
 		this.room = null;
 		this.tabs = [];
@@ -102,6 +111,19 @@ class Game {
 			ft.alpha -= 0.01;
 			if (ft.alpha <= 0) this.flyingText.splice(i, 1);
 		}
+		// Prune expired gold effects.
+		const now = performance.now();
+		if (this.goldEffects.length) this.goldEffects = this.goldEffects.filter((e) => e.expiry > now);
+		// Gold-shape particles: spawned on a ring, drift toward the shape's center, fade in,
+		// then snap off — the OSA portal-particle effect (ring of bits being drawn inward).
+		for (let i = this.particles.length - 1; i >= 0; --i) {
+			const p = this.particles[i];
+			p.age += 1;
+			p.x += p.vx;
+			p.y += p.vy;
+			const dx = p.cx - p.x, dy = p.cy - p.y;
+			if (p.age > PARTICLE_FRAMES || dx * dx + dy * dy < 64) this.particles.splice(i, 1);
+		}
 	}
 
 	render(drawText) {
@@ -113,6 +135,22 @@ class Game {
 		for (const siege of this.sieges) siege.render(ctx);
 		for (const shape of this.shapes) shape.render(ctx);
 		for (const tank of this.tanks) tank.render(ctx);
+
+		// Gold-shape sparkle particles (gold = the square color).
+		if (this.particles.length) {
+			const sc = this.scale * this.room.fov;
+			ctx.fillStyle = colors.square;
+			ctx.strokeStyle = darken(colors.square);
+			ctx.lineWidth = 4 * sc;   // same border width as a bullet.
+			for (const p of this.particles) {
+				ctx.globalAlpha = Math.min(PARTICLE_ALPHA_CAP, PARTICLE_ALPHA_STEP * p.age);
+				ctx.beginPath();
+				ctx.arc(p.x * sc, p.y * sc, p.size * sc, 0, Math.PI * 2);
+				ctx.fill();
+				ctx.stroke();
+			}
+			ctx.globalAlpha = 1;
+		}
 
 		for (const ft of this.flyingText) {
 			ctx.globalAlpha = ft.alpha;
@@ -197,6 +235,27 @@ class Game {
 			drawText(ctx, secondary, x + 8 * this.scale, y + 52 * this.scale, false, true, false, 24 * this.scale);
 		}
 		ctx.restore();
+
+		// Active gold-shape effects, shown as small gold text above the score indicator.
+		if (this.goldEffects.length) {
+			const now = performance.now();
+			const parts = [];
+			for (const e of this.goldEffects) {
+				const rem = Math.max(0, (e.expiry - now) / 1000);
+				const m = Math.floor(rem / 60);
+				const s = Math.floor(rem % 60);
+				parts.push(e.label + " (" + m + ":" + String(s).padStart(2, "0") + ")");
+			}
+			ctx.font = "bold " + 20 * this.scale + "px Ubuntu";
+			ctx.textAlign = "center";
+			ctx.textBaseline = "middle";
+			ctx.lineWidth = 5 * this.scale;
+			ctx.strokeStyle = "#222";
+			ctx.fillStyle = colors.square;
+			const txt = parts.join(", ");
+			ctx.strokeText(txt, this.width / 2, 74 * this.scale);
+			ctx.fillText(txt, this.width / 2, 74 * this.scale);
+		}
 
 		drawText(ctx, "You have " + formatNumber(state.score) + " score", this.width / 2, 120 * this.scale, false, true, true, 48 * this.scale);
 		drawText(

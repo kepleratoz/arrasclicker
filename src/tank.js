@@ -3,6 +3,7 @@ import { Vec2, formatNumber, lerpColor, REGEN_PER_FRAME, osaCurve, osaApply } fr
 import { game } from "./game.js";
 import { mouse, keys } from "./input.js";
 import { drawPolygon, drawHealthBar, drawText } from "./render.js";
+import { goldTankDamageMul, goldTankReloadMul, goldScoreMul, grantGoldEffect } from "./goldEffects.js";
 import { TANK_DEFS } from "./tankDefs.js";
 
 const BODY_FILL = "#58b0d0";
@@ -67,11 +68,11 @@ function up(tank, key) { return tank?.upgrades?.[key] ?? 0; }
 // the actual upgrade max — avoids drift if specs are rebalanced later.
 const TANK_SKILL_CAPS = Object.fromEntries(TANK_UPGRADE_SPECS.map(s => [s.key, s.max]));
 function tankSkill(tank, key) { return osaCurve(up(tank, key), TANK_SKILL_CAPS[key] ?? 10); }
-function tankShootInterval(tank) { return BASE_SHOOT_INTERVAL * Math.pow(0.5, tankSkill(tank, "reload")); }
-function tankCanTarget(shape) { return shape.rarity < state.tankRarityCap - 1; }
+function tankShootInterval(tank) { return BASE_SHOOT_INTERVAL * Math.pow(0.5, tankSkill(tank, "reload")) * goldTankReloadMul(); }
+function tankCanTarget(shape) { return !shape.isGold && shape.rarity < state.tankRarityCap - 1; }
 function tankCanLockOn(shape) { return tankCanTarget(shape) && shape.rarity !== 4; }
 function tankDamageMul(shape) { return shape.rarity === 4 ? 0.1 : 1; }
-function tankBaseDamage(tank) { return osaApply(3, tankSkill(tank, "damage")); }
+function tankBaseDamage(tank) { return osaApply(3, tankSkill(tank, "damage")) * goldTankDamageMul(); }
 function tankBulletLife() { return BASE_BULLET_LIFE; }
 function tankBulletHealth(tank) { return 5 * osaApply(2, tankSkill(tank, "bulletHealth")); }
 function tankSpeed(tank) { return BASE_TANK_SPEED * osaApply(0.8, tankSkill(tank, "speed")); }
@@ -375,14 +376,16 @@ export class Bullet {
 			this.health -= result.toBullet;
 			if (result.toTarget > 0) shape.damageBlend = 1;
 			if (shape.health <= 0 && !shape.dying) {
+				if (shape.isGold) grantGoldEffect(shape.type);
 				shape.startDying();
-				state.score += shape.score;
+				const gained = Math.round(shape.score * goldScoreMul());
+				state.score += gained;
 				const sc = game.scale * game.room.fov;
 				game.flyingText.push({
 					x: shape.pos.x * sc,
 					y: shape.pos.y * sc,
 					alpha: 1,
-					text: "+" + formatNumber(shape.score),
+					text: "+" + formatNumber(gained),
 				});
 				if (this.tank && typeof this.tank.gainXp === "function") this.tank.gainXp(getJackpot(shapeXpValue(shape)));
 			}
@@ -435,6 +438,7 @@ function drawTrap(ctx, x, y, radius, angle) {
 }
 
 const MAX_TURN_PER_FRAME = 0.12;
+const MAX_TANKS_PER_TARGET = 2;   // how many tanks may lock onto the same mob.
 const DEATH_TURN_PER_FRAME = MAX_TURN_PER_FRAME * 1.5;  // ~normal turn speed for the random spin on death.
 const RECOIL_IMPULSE = 0.18;
 const RECOIL_SPRING = 0.2;
@@ -628,11 +632,14 @@ export class Tank {
 		this.maxShield = tankMaxShield(this);
 		this.shield = Math.min(this.shield, this.maxShield);
 	}
-	findNearest(claimed) {
+	// `claimCounts` is a Map<shape, number> of how many tanks already target each shape.
+	// Up to MAX_TANKS_PER_TARGET tanks may share one mob.
+	findNearest(claimCounts) {
 		let best = null;
 		let bestDistSq = Infinity;
 		for (const sh of game.shapes) {
-			if (sh.isDead() || !tankCanLockOn(sh) || claimed.has(sh)) continue;
+			if (sh.isDead() || !tankCanLockOn(sh)) continue;
+			if ((claimCounts.get(sh) ?? 0) >= MAX_TANKS_PER_TARGET) continue;
 			const dx = sh.pos.x - this.pos.x;
 			const dy = sh.pos.y - this.pos.y;
 			const d = dx * dx + dy * dy;
@@ -698,12 +705,12 @@ export class Tank {
 			else this.droneControl = null;
 		} else {
 			this.droneControl = null;
-			const claimed = new Set();
+			const claimCounts = new Map();
 			for (const t of game.tanks) {
 				if (t === this) break;
-				if (t.target && !t.target.isDead()) claimed.add(t.target);
+				if (t.target && !t.target.isDead()) claimCounts.set(t.target, (claimCounts.get(t.target) ?? 0) + 1);
 			}
-			target = this.findNearest(claimed);
+			target = this.findNearest(claimCounts);
 			this.target = target;
 			if (target) {
 				const dx = target.pos.x - this.pos.x;
