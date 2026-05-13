@@ -322,9 +322,13 @@ document.body.appendChild(game.canvas);
 const saveButton = new Button(() => prompt("Copy the save", encode()), "#3085db");
 const loadButton = new Button(() => {
 	const data = prompt("Load save");
-	if (data) {
+	if (!data) return;
+	try {
 		decode(data);
 		saveToStorage();
+	} catch (e) {
+		console.error("Load failed:", e);
+		alert("Couldn't load that save — the data looks corrupted or wasn't pasted in full.");
 	}
 }, "#db9146");
 const shapeAnimButton = new Button(() => { state.shapeDeathAnimEnabled = !state.shapeDeathAnimEnabled; }, "#efc74b");

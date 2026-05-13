@@ -15,7 +15,11 @@ export function encode() {
 }
 
 export function decode(encoded) {
-	const chars = atob(encoded).split("");
+	// Tolerate copy/paste damage: strip whitespace, restore `+` chars often replaced
+	// by spaces in URL/text contexts, and re-pad the base64 string.
+	let cleaned = String(encoded).replace(/\s+/g, "").replace(/ /g, "+");
+	while (cleaned.length % 4) cleaned += "=";
+	const chars = atob(cleaned).split("");
 	let seed = XOR_SEED;
 	for (let i = 0; i < chars.length; ++i) {
 		seed ^= seed << 7;
