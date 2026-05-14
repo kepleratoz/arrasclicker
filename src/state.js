@@ -14,6 +14,11 @@ export const state = {
 	arenaFovUpgrades: 0,
 	tankCount: 0,
 	clickDamageUpgrades: 0,
+	lightningOwned: false,
+	poisonOwned: false,
+	midasOwned: false,
+	equippedClickUpgrade: null,   // null | "lightning" | "poison" | "midas"
+	lightningClickCount: 0,       // every 3rd click triggers the chain.
 	tankRarityCap: 4,
 	tankForceTypeCap: -1,        // -1 = off; 0..4 = always-target Egg..Hexagon regardless of rarity.
 	tanks: [],

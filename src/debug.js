@@ -108,6 +108,12 @@ const upgradeModeBtn = new Button(() => setMode("upgrade"), MODE_COLOR);
 const editionModeBtn = new Button(() => setMode("edition"), MODE_COLOR);
 const damageModeBtn = new Button(() => setMode("damage"), MODE_COLOR);
 const resetTankModeBtn = new Button(() => setMode("resetTank"), MODE_COLOR);
+const mapEditorModeBtn = new Button(() => setMode("mapEditor"), MODE_COLOR);
+
+// Map editor grid: at the upgraded arena (fov=1, 840 wide), exactly 9 full walls (3×3)
+// or 36 half walls (6×6) fit — so full = 840/3 = 280, half = 840/6 = 140.
+const MAP_CELL = 140;            // half-wall side length.
+const MAP_FULL = MAP_CELL * 2;   // full-wall side length (280).
 const resetButton = new Button(handleReset, "#222222");
 let panelOpen = false;
 
@@ -185,6 +191,52 @@ function handleDamageMode() {
 	if (mouse.leftClick) damageEntityUnderMouse();
 }
 
+function handleMapEditorMode() {
+	if (keys.justPressed.has("Escape")) { game.debugMode = null; return; }
+	const w = worldFromMouse();
+	if (keys.justPressed.has("Digit1")) {
+		// Full wall: snap center to the cell-corner grid (multiples of MAP_CELL).
+		const cx = Math.round(w.x / MAP_CELL) * MAP_CELL;
+		const cy = Math.round(w.y / MAP_CELL) * MAP_CELL;
+		if (!game.walls.some((wl) => wl.x === cx && wl.y === cy && wl.size === MAP_FULL)) {
+			game.walls.push({ x: cx, y: cy, size: MAP_FULL });
+		}
+	}
+	if (keys.justPressed.has("Digit2")) {
+		// Half wall: snap center to the half-wall cell center.
+		const cx = Math.floor(w.x / MAP_CELL) * MAP_CELL + MAP_CELL / 2;
+		const cy = Math.floor(w.y / MAP_CELL) * MAP_CELL + MAP_CELL / 2;
+		if (!game.walls.some((wl) => wl.x === cx && wl.y === cy && wl.size === MAP_CELL)) {
+			game.walls.push({ x: cx, y: cy, size: MAP_CELL });
+		}
+	}
+	if (keys.pressed.has("Digit3")) {
+		// Erase any wall whose bounding box contains the cursor (hold to drag-erase).
+		for (let i = game.walls.length - 1; i >= 0; --i) {
+			const wl = game.walls[i];
+			const half = wl.size / 2;
+			if (w.x >= wl.x - half && w.x <= wl.x + half && w.y >= wl.y - half && w.y <= wl.y + half) {
+				game.walls.splice(i, 1);
+			}
+		}
+	}
+	if (keys.justPressed.has("Digit4")) {
+		// Export the wall list as a tilemap-friendly JSON blob.
+		const data = JSON.stringify({
+			cellSize: MAP_CELL,
+			fullSize: MAP_FULL,
+			walls: game.walls.map((wl) => ({
+				type: wl.size === MAP_FULL ? "full" : "half",
+				x: wl.x,
+				y: wl.y,
+				gridX: Math.round(wl.x / MAP_CELL),
+				gridY: Math.round(wl.y / MAP_CELL),
+			})),
+		}, null, 2);
+		prompt("Copy this map JSON:", data);
+	}
+}
+
 function handleResetTankMode() {
 	if (keys.justPressed.has("Escape")) { game.debugMode = null; return; }
 	if (!mouse.leftClick) return;
@@ -220,6 +272,7 @@ export function updateDebug() {
 	else if (game.debugMode === "edition") handleSelectMode(applyEditionKey);
 	else if (game.debugMode === "damage") handleDamageMode();
 	else if (game.debugMode === "resetTank") handleResetTankMode();
+	else if (game.debugMode === "mapEditor") handleMapEditorMode();
 }
 
 let resetClicks = 0;
@@ -262,6 +315,8 @@ export function renderDebugPanel(ctx) {
 		damageModeBtn.render(ctx, x, y, w, h, game.debugMode === "damage" ? "Damage Mode ✓" : "Damage Mode", false);
 		y += h + 4 * s;
 		resetTankModeBtn.render(ctx, x, y, w, h, game.debugMode === "resetTank" ? "Reset Tank ✓" : "Reset Tank", false);
+		y += h + 4 * s;
+		mapEditorModeBtn.render(ctx, x, y, w, h, game.debugMode === "mapEditor" ? "Map Editor ✓" : "Map Editor", false);
 		y += h + 12 * s;
 		resetButton.render(ctx, x, y, w, h, resetLabel(), false);
 	}
@@ -275,6 +330,8 @@ export function renderDebugPanel(ctx) {
 			? "DAMAGE MODE — click any entity to deal 1 damage, ESC to cancel"
 			: game.debugMode === "resetTank"
 			? "RESET TANK MODE — click a tank to wipe its upgrades, ESC to cancel"
+			: game.debugMode === "mapEditor"
+			? "MAP EDITOR — 1=full wall, 2=half wall, 3=erase (hold), 4=export, ESC to cancel"
 			: "EDITION MODE — click shape, press 1-6 (rarity, 6=Ethereal), 7=Gold, ESC to cancel";
 		drawText(ctx, banner, game.width / 2, 60 * s, false, true, true, 22 * s);
 		if ((game.debugMode === "upgrade" || game.debugMode === "edition") && game.debugSelectedShape && !game.debugSelectedShape.isDead()) {

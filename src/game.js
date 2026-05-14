@@ -48,6 +48,8 @@ class Game {
 		this.flyingText = [];
 		this.goldEffects = [];      // [{ key, label, expiry }] — temporary gold-shape buffs.
 		this.particles = [];        // [{ x, y, vx, vy, size, dying }] — gold-shape sparkle bits.
+		this.walls = [];            // [{ x, y, size }] — debug map-editor walls (session-only).
+		this.lightningBolts = [];   // [{ points: [{x,y}, ...], life }] — lightning visuals fading out.
 		// `room`, `tabs`, `currentTab` are wired up in init() after circular imports settle.
 		this.room = null;
 		this.tabs = [];
@@ -68,6 +70,10 @@ class Game {
 	}
 
 	update() {
+		this._lightningFiredThisFrame = false;
+		for (let i = this.lightningBolts.length - 1; i >= 0; --i) {
+			if (--this.lightningBolts[i].life <= 0) this.lightningBolts.splice(i, 1);
+		}
 		this.room.update();
 		for (let i = this.shapes.length - 1; i > -1; --i) {
 			const shape = this.shapes[i];
@@ -132,9 +138,56 @@ class Game {
 		ctx.lineCap = "round";
 		this.room.render(ctx);
 
+		// Map-editor walls. OSA Class.wall.COLOR = "lgrey" = #a4a4ad in the normal theme;
+		// borders are darken(fill, 0.65). Drawn as axis-aligned squares with rounded corners.
+		if (this.walls.length) {
+			const sc = this.scale * this.room.fov;
+			ctx.fillStyle = "#a4a4ad";
+			ctx.strokeStyle = darken("#a4a4ad", 0.65);
+			ctx.lineWidth = 4 * sc;
+			ctx.lineJoin = "round";
+			ctx.lineCap = "round";
+			for (const w of this.walls) {
+				const half = w.size / 2;
+				const x = (w.x - half) * sc;
+				const y = (w.y - half) * sc;
+				const side = w.size * sc;
+				// Sharp 4-vertex path; the round line-join on the stroke softens corners just
+				// like tank barrels (which are also sharp polygons stroked with lineJoin=round).
+				ctx.beginPath();
+				ctx.moveTo(x, y);
+				ctx.lineTo(x + side, y);
+				ctx.lineTo(x + side, y + side);
+				ctx.lineTo(x, y + side);
+				ctx.closePath();
+				ctx.fill();
+				ctx.stroke();
+			}
+		}
+
 		for (const siege of this.sieges) siege.render(ctx);
 		for (const shape of this.shapes) shape.render(ctx);
 		for (const tank of this.tanks) tank.render(ctx);
+
+		if (this.lightningBolts.length) {
+			const sc = this.scale * this.room.fov;
+			ctx.lineCap = "round";
+			ctx.lineJoin = "round";
+			for (const b of this.lightningBolts) {
+				const alpha = Math.min(1, b.life / b.maxLife);
+				ctx.globalAlpha = alpha;
+				ctx.strokeStyle = "rgba(180,210,255,0.85)";
+				ctx.lineWidth = 9 * sc;
+				ctx.beginPath();
+				ctx.moveTo(b.points[0].x * sc, b.points[0].y * sc);
+				for (let i = 1; i < b.points.length; i++) ctx.lineTo(b.points[i].x * sc, b.points[i].y * sc);
+				ctx.stroke();
+				ctx.strokeStyle = "#ffffff";
+				ctx.lineWidth = 3 * sc;
+				ctx.stroke();
+			}
+			ctx.globalAlpha = 1;
+		}
 
 		// Gold-shape sparkle particles (gold = the square color).
 		if (this.particles.length) {
@@ -237,24 +290,37 @@ class Game {
 		ctx.restore();
 
 		// Active gold-shape effects, shown as small gold text above the score indicator.
+		// Multiple stacks of the same key collapse to one line showing the combined
+		// multiplier and the soonest-expiring stack's countdown (so the player sees
+		// when the multiplier will next drop).
 		if (this.goldEffects.length) {
 			const now = performance.now();
-			const parts = [];
+			const byKey = new Map();
 			for (const e of this.goldEffects) {
-				const rem = Math.max(0, (e.expiry - now) / 1000);
-				const m = Math.floor(rem / 60);
-				const s = Math.floor(rem % 60);
-				parts.push(e.label + " (" + m + ":" + String(s).padStart(2, "0") + ")");
+				if (e.expiry <= now) continue;
+				const cur = byKey.get(e.key);
+				if (!cur) byKey.set(e.key, { label: e.label, mul: e.mul, earliest: e.expiry });
+				else { cur.mul *= e.mul; cur.earliest = Math.min(cur.earliest, e.expiry); }
 			}
-			ctx.font = "bold " + 20 * this.scale + "px Ubuntu";
-			ctx.textAlign = "center";
-			ctx.textBaseline = "middle";
-			ctx.lineWidth = 5 * this.scale;
-			ctx.strokeStyle = "#222";
-			ctx.fillStyle = colors.square;
-			const txt = parts.join(", ");
-			ctx.strokeText(txt, this.width / 2, 74 * this.scale);
-			ctx.fillText(txt, this.width / 2, 74 * this.scale);
+			if (byKey.size > 0) {
+				const parts = [];
+				for (const v of byKey.values()) {
+					const rem = (v.earliest - now) / 1000;
+					const m = Math.floor(rem / 60);
+					const s = Math.floor(rem % 60);
+					const mulStr = Number.isInteger(v.mul) ? String(v.mul) : v.mul.toFixed(2).replace(/\.?0+$/, "");
+					parts.push(mulStr + "x " + v.label + " (" + m + ":" + String(s).padStart(2, "0") + ")");
+				}
+				ctx.font = "bold " + 20 * this.scale + "px Ubuntu";
+				ctx.textAlign = "center";
+				ctx.textBaseline = "middle";
+				ctx.lineWidth = 5 * this.scale;
+				ctx.strokeStyle = "#222";
+				ctx.fillStyle = colors.square;
+				const txt = parts.join(", ");
+				ctx.strokeText(txt, this.width / 2, 74 * this.scale);
+				ctx.fillText(txt, this.width / 2, 74 * this.scale);
+			}
 		}
 
 		drawText(ctx, "You have " + formatNumber(state.score) + " score", this.width / 2, 120 * this.scale, false, true, true, 48 * this.scale);

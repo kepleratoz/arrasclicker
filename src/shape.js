@@ -3,7 +3,7 @@ import { Vec2, darken, colors, formatNumber, REGEN_PER_FRAME, lerpColor } from "
 import { mouse } from "./input.js";
 import { drawPolygon, drawHealthBar } from "./render.js";
 import { game } from "./game.js";
-import { Bullet } from "./tank.js";
+import { Bullet, tankCanTarget } from "./tank.js";
 import { grantGoldEffect, goldRareChanceMul, goldClickDamageMul, goldClickScoreMul, goldScoreMul } from "./goldEffects.js";
 
 // Gold-shape constants.
@@ -93,6 +93,8 @@ export class Shape {
 		this.isGold = false;
 		this.spawnTime = 0;      // performance.now() at spawn; gold shapes decay after GOLD_DECAY_MS.
 		this._particleTimer = 0;
+		this.poisonEnd = 0;      // performance.now() time at which poison expires.
+		this.poisonDPS = 0;      // damage per second from poison (25% of original click damage).
 	}
 	startDying() {
 		if (this.dying) return;
@@ -218,6 +220,9 @@ export class Shape {
 		this.damageBlend *= 0.85;
 		if (this.damageBlend < 0.01) this.damageBlend = 0;
 		this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
+		if (this.poisonEnd && performance.now() < this.poisonEnd && !this.dying) {
+			this._applyHit(this.poisonDPS / 60);
+		}
 		if ((mouse.leftClick || mouse.right) && !game.debugMode && !game.controlledTank) {
 			const screenScale = game.scale * game.room.fov;
 			const dx = mouse.x - this.pos.x * screenScale;
@@ -225,23 +230,18 @@ export class Shape {
 			const overlap = (mouse.leftClick ? 10 : 100) + this.size * screenScale - Math.sqrt(dx * dx + dy * dy);
 			if (overlap > 0) {
 				if (mouse.leftClick) {
-					this.health -= (1 + (state.clickDamageUpgrades || 0)) * goldClickDamageMul();
-					this.damageBlend = 1;
-					if (this.rarity === ETHEREAL && this.health > 0 && Math.random() < 0.5) {
-						this.pos.x = game.room.minX + Math.random() * game.room.maxX;
-						this.pos.y = game.room.minY + Math.random() * game.room.maxY;
+					const baseDmg = (1 + (state.clickDamageUpgrades || 0)) * goldClickDamageMul();
+					const equipped = state.equippedClickUpgrade;
+					if (equipped === "midas" && Math.random() < 0.001) this.makeGold(this.type);
+					this._applyHit(baseDmg);
+					if (equipped === "poison" && !this.dying) {
+						this.poisonEnd = performance.now() + 10000;
+						this.poisonDPS = baseDmg * 0.25;
 					}
-					if (this.health <= 0) {
-						if (this.isGold) grantGoldEffect(this.type);
-						this.startDying();
-						const gained = Math.round(this.score * goldScoreMul() * goldClickScoreMul());
-						state.score += gained;
-						game.flyingText.push({
-							x: this.pos.x * screenScale,
-							y: this.pos.y * screenScale,
-							alpha: 1,
-							text: "+" + formatNumber(gained),
-						});
+					if (equipped === "lightning" && !game._lightningFiredThisFrame) {
+						game._lightningFiredThisFrame = true;
+						state.lightningClickCount = (state.lightningClickCount || 0) + 1;
+						if (state.lightningClickCount % 3 === 0) this._fireLightning(baseDmg);
 					}
 				} else {
 					const angle = Math.atan2(dy, dx);
@@ -337,6 +337,53 @@ export class Shape {
 		const angle = Math.atan2(dy, dx);
 		this.pos.sub(Vec2.circle(angle, overlap).divideVal(this.size));
 		other.pos.add(Vec2.circle(angle, overlap).divideVal(other.size));
+	}
+	_applyHit(damage) {
+		if (this.dying) return;
+		this.health -= damage;
+		this.damageBlend = 1;
+		if (this.rarity === ETHEREAL && this.health > 0 && Math.random() < 0.5) {
+			this.pos.x = game.room.minX + Math.random() * game.room.maxX;
+			this.pos.y = game.room.minY + Math.random() * game.room.maxY;
+		}
+		if (this.health <= 0) {
+			if (this.isGold) grantGoldEffect(this.type);
+			this.startDying();
+			const gained = Math.round(this.score * goldScoreMul() * goldClickScoreMul());
+			state.score += gained;
+			const sc = game.scale * game.room.fov;
+			game.flyingText.push({
+				x: this.pos.x * sc,
+				y: this.pos.y * sc,
+				alpha: 1,
+				text: "+" + formatNumber(gained),
+			});
+		}
+	}
+	_fireLightning(damage) {
+		const MAX_CHAIN = 6;
+		const MAX_HOP_SQ = 250 * 250;
+		const visited = new Set([this]);
+		const points = [{ x: this.pos.x, y: this.pos.y }];
+		let current = this;
+		for (let i = 0; i < MAX_CHAIN; i++) {
+			let best = null;
+			let bestSq = MAX_HOP_SQ;
+			for (const s of game.shapes) {
+				if (visited.has(s) || s.dying) continue;
+				if (!(tankCanTarget(s) || s.type === this.type)) continue;
+				const dx = s.pos.x - current.pos.x;
+				const dy = s.pos.y - current.pos.y;
+				const d = dx * dx + dy * dy;
+				if (d < bestSq) { bestSq = d; best = s; }
+			}
+			if (!best) break;
+			visited.add(best);
+			points.push({ x: best.pos.x, y: best.pos.y });
+			best._applyHit(damage);
+			current = best;
+		}
+		if (points.length >= 2) game.lightningBolts.push({ points, life: 18, maxLife: 18 });
 	}
 	isDead() {
 		return this.dying > 0;

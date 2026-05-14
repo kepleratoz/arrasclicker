@@ -69,7 +69,7 @@ function up(tank, key) { return tank?.upgrades?.[key] ?? 0; }
 const TANK_SKILL_CAPS = Object.fromEntries(TANK_UPGRADE_SPECS.map(s => [s.key, s.max]));
 function tankSkill(tank, key) { return osaCurve(up(tank, key), TANK_SKILL_CAPS[key] ?? 10); }
 function tankShootInterval(tank) { return BASE_SHOOT_INTERVAL * Math.pow(0.5, tankSkill(tank, "reload")) * goldTankReloadMul(); }
-function tankCanTarget(shape) {
+export function tankCanTarget(shape) {
 	if (shape.isGold) return false;
 	// Two independent gates:
 	//   • Rarity cap (`state.tankRarityCap`): blocks high-rarity shapes the player wants

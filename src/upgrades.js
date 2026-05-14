@@ -43,7 +43,52 @@ class ClickDamage {
 	getSecondary() { return formatNumber(this.cost()) + " score"; }
 	isDisabled() { return state.score < this.cost(); }
 }
-export const clickUpgrades = [new ClickDamage()];
+const CLICK_ABILITIES = {
+	lightning: { label: "Lightning",   cost: 5e19, color: "#f3e96b", ownedFlag: "lightningOwned" },
+	poison:    { label: "Poison",      cost: 5e19, color: "#5cd970", ownedFlag: "poisonOwned"    },
+	midas:     { label: "Midas Touch", cost: 1e20, color: "#d4af37", ownedFlag: "midasOwned"     },
+};
+const CLICK_DESCRIPTIONS = {
+	lightning: "Every 3rd click chains lightning to nearby shapes.",
+	poison:    "Clicked shapes take 25% click damage / sec for 10s.",
+	midas:     "0.1% chance per click to convert the shape to gold.",
+};
+class ClickAbility {
+	constructor(key) {
+		this.key = key;
+		const a = CLICK_ABILITIES[key];
+		this.button = new Button(() => this.activate(), a.color);
+	}
+	isOwned()    { return state[CLICK_ABILITIES[this.key].ownedFlag]; }
+	isEquipped() { return state.equippedClickUpgrade === this.key; }
+	activate() {
+		const a = CLICK_ABILITIES[this.key];
+		if (!this.isOwned()) {
+			if (state.score < a.cost) return;
+			state.score -= a.cost;
+			state[a.ownedFlag] = true;
+			state.equippedClickUpgrade = this.key;
+			return;
+		}
+		state.equippedClickUpgrade = this.isEquipped() ? null : this.key;
+	}
+	getLabel() {
+		const a = CLICK_ABILITIES[this.key];
+		const tag = !this.isOwned() ? "" : this.isEquipped() ? " (EQUIPPED)" : " (owned)";
+		return a.label + tag + " — " + CLICK_DESCRIPTIONS[this.key];
+	}
+	getSecondary() {
+		if (!this.isOwned()) return formatNumber(CLICK_ABILITIES[this.key].cost) + " score";
+		return this.isEquipped() ? "Click to unequip" : "Click to equip";
+	}
+	isDisabled() { return !this.isOwned() && state.score < CLICK_ABILITIES[this.key].cost; }
+}
+export const clickUpgrades = [
+	new ClickDamage(),
+	new ClickAbility("lightning"),
+	new ClickAbility("poison"),
+	new ClickAbility("midas"),
+];
 
 // ---------- General ----------
 class ShapesCap {
