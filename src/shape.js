@@ -505,15 +505,18 @@ export class Sentry extends Shape {
 			const dy = mouse.y - this.pos.y * sScale;
 			const overlap = 10 + this.size * sScale - Math.sqrt(dx * dx + dy * dy);
 			if (overlap > 0) {
-				this.health -= 1 + (state.clickDamageUpgrades || 0);
+				// Sentries take 20% of click damage (they're not pure "click fodder" like shapes).
+				this.health -= (1 + (state.clickDamageUpgrades || 0)) * goldClickDamageMul() * 0.2;
 				this.damageBlend = 1;
 				if (this.health <= 0) this.startDying();
 			}
 		}
 		// Movement: orbit the nearest sanctuary at SENTRY_ORBIT_RADIUS, picked once per frame.
+		// Neutral sanctuaries are passive landmarks — sentries ignore them.
 		let homeSanctuary = null;
 		let homeDistSq = Infinity;
 		for (const sg of game.sieges) {
+			if (sg.neutral) continue;
 			const dx = sg.pos.x - this.pos.x;
 			const dy = sg.pos.y - this.pos.y;
 			const d = dx * dx + dy * dy;

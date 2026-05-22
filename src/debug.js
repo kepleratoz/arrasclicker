@@ -84,15 +84,20 @@ const actions = [
 		run: () => { for (let i = game.shapes.length - 1; i >= 0; --i) if (!game.shapes[i].isSentry) game.shapes.splice(i, 1); } },
 	{ label: "Clear Mobs",
 		run: () => { for (let i = game.shapes.length - 1; i >= 0; --i) if (game.shapes[i].isSentry) game.shapes.splice(i, 1); } },
-	{ label: () => game.sieges.length === 0 ? "Sanctuary: OFF" : "Sanctuary: Tier " + game.sieges[0].tier,
+	{ label: () => {
+			const real = game.sieges.find((s) => !s.neutral);
+			return real ? "Sanctuary: Tier " + real.tier : "Sanctuary: OFF";
+		},
 		run: () => {
-			if (game.sieges.length === 0) {
+			const realIdx = game.sieges.findIndex((s) => !s.neutral);
+			const real = realIdx >= 0 ? game.sieges[realIdx] : null;
+			if (!real) {
 				game.sieges.push(new Siege(1));
-			} else if (game.sieges[0].tier === 1) {
-				game.sieges.length = 0;
+			} else if (real.tier === 1) {
+				game.sieges.splice(realIdx, 1);
 				game.sieges.push(new Siege(2));
 			} else {
-				game.sieges.length = 0;
+				game.sieges.splice(realIdx, 1);
 			}
 		} },
 	{ label: "Max Out Tanks",
@@ -194,18 +199,21 @@ function handleDamageMode() {
 function handleMapEditorMode() {
 	if (keys.justPressed.has("Escape")) { game.debugMode = null; return; }
 	const w = worldFromMouse();
+	// Wall snapping is anchored at the map center so a 3×3 of full walls (or 6×6 of
+	// halves) lands exactly inside the upgraded map 1's playable area — and the
+	// center full wall coincides with the nest tile.
+	const mcx = game.room.minX + game.room.maxX / 2;
+	const mcy = game.room.minY + game.room.maxY / 2;
 	if (keys.justPressed.has("Digit1")) {
-		// Full wall: snap center to the cell-corner grid (multiples of MAP_CELL).
-		const cx = Math.round(w.x / MAP_CELL) * MAP_CELL;
-		const cy = Math.round(w.y / MAP_CELL) * MAP_CELL;
+		const cx = mcx + Math.round((w.x - mcx) / MAP_CELL) * MAP_CELL;
+		const cy = mcy + Math.round((w.y - mcy) / MAP_CELL) * MAP_CELL;
 		if (!game.walls.some((wl) => wl.x === cx && wl.y === cy && wl.size === MAP_FULL)) {
 			game.walls.push({ x: cx, y: cy, size: MAP_FULL });
 		}
 	}
 	if (keys.justPressed.has("Digit2")) {
-		// Half wall: snap center to the half-wall cell center.
-		const cx = Math.floor(w.x / MAP_CELL) * MAP_CELL + MAP_CELL / 2;
-		const cy = Math.floor(w.y / MAP_CELL) * MAP_CELL + MAP_CELL / 2;
+		const cx = mcx + (Math.floor((w.x - mcx) / MAP_CELL) + 0.5) * MAP_CELL;
+		const cy = mcy + (Math.floor((w.y - mcy) / MAP_CELL) + 0.5) * MAP_CELL;
 		if (!game.walls.some((wl) => wl.x === cx && wl.y === cy && wl.size === MAP_CELL)) {
 			game.walls.push({ x: cx, y: cy, size: MAP_CELL });
 		}

@@ -1,6 +1,6 @@
 import { state } from "./state.js";
 import { Button, SliderButton } from "./button.js";
-import { colors, formatNumber } from "./utils.js";
+import { colors, formatNumber, darken } from "./utils.js";
 import { shapeTypeFromBuff, shapeRarityFromBuff } from "./shape.js";
 import { syncTanks } from "./tank.js";
 
@@ -109,19 +109,39 @@ class SpawnInterval {
 	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score"; }
 	isDisabled() { return this.max() || state.score < this.cost(); }
 }
+// Palette matches the player's highest unlocked rarity so the upgrade button
+// stays visually consistent with the actual top-tier they can spawn.
+const SHINY_PALETTE = [colors.shiny, colors.legendary, "#444444", "#ff5cd4"];
 class ShinyChance {
 	button = new Button(() => { state.score -= this.cost(); state.shinyChanceUpgrades += 1; state.shapeRarityBuff *= 1.05; }, colors.shiny);
+	syncColor() {
+		const fill = SHINY_PALETTE[Math.min(SHINY_PALETTE.length - 1, state.rarityCap)];
+		this.button.fill = fill;
+		this.button.stroke = darken(fill, 0.75);
+	}
 	getLabel() { return "Increase Rare Shapes Chance (" + formatNumber(state.shapeRarityBuff) + "x more)"; }
 	cost() { return 1000 * Math.pow(2, state.shinyChanceUpgrades); }
-	getSecondary() { return formatNumber(this.cost()) + " score."; }
+	getSecondary() { this.syncColor(); return formatNumber(this.cost()) + " score."; }
 	isDisabled() { return state.score < this.cost(); }
+}
+class ExtendGoldenDuration {
+	button = new Button(() => { state.score -= this.cost(); state.goldEffectExtensionUpgrades = (state.goldEffectExtensionUpgrades || 0) + 1; }, "#efc74b");
+	level() { return state.goldEffectExtensionUpgrades || 0; }
+	getLabel() { return "+20s Golden Shape Effect Duration (" + this.level() + "/3, base 60s)"; }
+	max() { return this.level() >= 3; }
+	cost() { return [1e17, 1e19, 1e21][this.level()] ?? Infinity; }
+	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score"; }
+	isDisabled() { return this.max() || state.score < this.cost(); }
 }
 class ArenaFov {
 	button = new Button(() => { state.score -= this.cost(); state.arenaFovUpgrades += 1; }, colors.darkArena);
 	getLabel() { return "Increase Arena (" + formatNumber(state.arenaFovUpgrades) + ")"; }
-	max() { return state.arenaFovUpgrades >= 1; }
+	max() { return state.arenaFovUpgrades >= 1 || state.currentMap === 1; }
 	cost() { return Math.pow(1e5, Math.pow(state.arenaFovUpgrades + 1, 3)) * 100; }
-	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
+	getSecondary() {
+		if (state.currentMap === 1) return "Locked on Map 2";
+		return this.max() ? "MAX" : formatNumber(this.cost()) + " score.";
+	}
 	isDisabled() { return state.score < this.cost() || this.max(); }
 }
 class AddTank {
@@ -137,7 +157,7 @@ class AddTank {
 	}
 	isDisabled() { return this.max() || !this.requirement() || state.score < this.cost(); }
 }
-export const generalUpgrades = [new ShapesCap(), new SpawnInterval(), new ShinyChance(), new ArenaFov(), new AddTank()];
+export const generalUpgrades = [new ShapesCap(), new SpawnInterval(), new ShinyChance(), new ExtendGoldenDuration(), new ArenaFov(), new AddTank()];
 
 // ---------- Square ----------
 class SquareEvolution {
@@ -345,7 +365,26 @@ class TankForceType {
 	getSecondary() { return ""; }
 	isDisabled() { return false; }
 }
-export const tankUpgrades = [new TankRarityCap(), new TankForceType()];
+// Force-target by rarity. Slider index 0 = Off; 1..5 maps to state.tankForceRarityCap 0..4.
+const FORCE_RARITY_NAMES = ["Off", ...RARITY_TIER_NAMES];
+const FORCE_RARITY_COLORS = ["#bbbbbb", ...RARITY_TIER_COLORS];
+class TankForceRarity {
+	button = new SliderButton(
+		FORCE_RARITY_NAMES,
+		() => (state.tankForceRarityCap ?? -1) + 1,
+		(idx) => { state.tankForceRarityCap = idx - 1; },
+		TANK_COLOR,
+		FORCE_RARITY_COLORS,
+	);
+	getLabel() {
+		const cap = state.tankForceRarityCap ?? -1;
+		if (cap < 0) return "Force-Target Rarity: Off";
+		return "Force-Target Rarity: " + RARITY_TIER_NAMES[cap] + " (always targets shapes of this rarity)";
+	}
+	getSecondary() { return ""; }
+	isDisabled() { return false; }
+}
+export const tankUpgrades = [new TankRarityCap(), new TankForceType(), new TankForceRarity()];
 
 class UnlockShadow {
 	button = new Button(() => { state.score -= this.cost(); state.rarityCap = Math.max(state.rarityCap, 2); }, colors.shadow, "rgba(34,34,34,0.4)");

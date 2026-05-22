@@ -9,11 +9,18 @@ export class Room {
 	maxY = 840;
 	fov = 2;
 	update() {
+		// Map 1 base size (no arena upgrades): maxX = 1080/2 - 240 = 300.
+		// Map 2 is exactly 5x5 walls wide (5 × 280 = 1400), ignoring arena upgrades.
+		if (state.currentMap === 1) {
+			const targetSize = 5 * 280;   // 5 walls × MAP_FULL.
+			this.fov = 1080 / (targetSize + 240);
+		} else {
+			this.fov = 2 / Math.pow(2, state.arenaFovUpgrades);
+		}
 		this.minX = 120;
 		this.minY = 120;
 		this.maxX = 1080 / this.fov - 240;
 		this.maxY = 1080 / this.fov - 240;
-		this.fov = 2 / Math.pow(2, state.arenaFovUpgrades);
 	}
 	render(ctx) {
 		ctx.fillStyle = "#d0d0d0";
@@ -27,20 +34,35 @@ export class Room {
 		);
 		if (state.arenaFovUpgrades >= 1) {
 			const sc = game.scale * this.fov;
-			const nestW = (this.maxX / 3) * sc;
-			const nestH = (this.maxY / 3) * sc;
+			// Map 2: zone is exactly 2x2 walls (2 × 280 = 560). Map 1: keep maxX/3 (matches
+			// the upgraded map 1's 1x1 wall = 280).
+			const nestWorld = state.currentMap === 1 ? 2 * 280 : this.maxX / 3;
+			const nestW = nestWorld * sc;
+			const nestH = nestWorld * sc;
 			const nestX = (this.minX + this.maxX / 2) * sc - nestW / 2;
 			const nestY = (this.minY + this.maxY / 2) * sc - nestH / 2;
-			ctx.fillStyle = "rgba(181,142,253,0.32)";
+			// Map 2 uses the OSA dominator/arena-closer yellow (#feca3f); Map 1 keeps
+			// its original purple nest tint so the neutral color is reserved for Map 2.
+			ctx.fillStyle = state.currentMap === 1
+				? "rgba(254,202,63,0.32)"
+				: "rgba(181,142,253,0.32)";
 			ctx.fillRect(nestX, nestY, nestW, nestH);
 		}
 		ctx.beginPath();
 		const gridSize = 30 * game.scale * this.fov;
-		for (let x = (game.width / 2) % gridSize; x < game.width; x += gridSize) {
+		// Anchor the grid so a vertical and horizontal line pass through the exact
+		// center of the playable map (not the canvas center) — keeps the grid aligned
+		// with the map regardless of arena fov / map index.
+		const sc = game.scale * this.fov;
+		const mapCx = (this.minX + this.maxX / 2) * sc;
+		const mapCy = (this.minY + this.maxY / 2) * sc;
+		const startX = ((mapCx % gridSize) + gridSize) % gridSize;
+		const startY = ((mapCy % gridSize) + gridSize) % gridSize;
+		for (let x = startX; x < game.width; x += gridSize) {
 			ctx.moveTo(x, 0);
 			ctx.lineTo(x, game.height);
 		}
-		for (let y = (game.height / 2) % gridSize; y < game.height; y += gridSize) {
+		for (let y = startY; y < game.height; y += gridSize) {
 			ctx.moveTo(0, y);
 			ctx.lineTo(game.width, y);
 		}

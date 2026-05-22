@@ -77,6 +77,7 @@ export function tankCanTarget(shape) {
 	//   • Force-type cap (`state.tankForceTypeCap`, -1 = off): unconditionally allows
 	//     any shape up to that type, overriding the rarity gate.
 	if ((state.tankForceTypeCap ?? -1) >= 0 && shape.type <= state.tankForceTypeCap) return true;
+	if ((state.tankForceRarityCap ?? -1) >= 0 && shape.rarity === state.tankForceRarityCap) return true;
 	return shape.rarity < state.tankRarityCap - 1;
 }
 function tankCanLockOn(shape) { return tankCanTarget(shape) && shape.rarity !== 4; }
@@ -154,6 +155,45 @@ function osaCollideDamage(bullet, target, dx, dy, dist, combinedRadius) {
 }
 
 const DEATH_FRAMES = 18; // ~300ms at 60fps to match OSA's getFade decay
+
+// Walls are session-only axis-aligned squares (debug map editor). Helpers below
+// return whether `pos` (a circle of `radius`) overlaps any wall, and push the
+// circle out of every wall it overlaps.
+export function overlapsWall(pos, radius) {
+	for (const w of game.walls) {
+		const half = w.size / 2;
+		const dx = pos.x - w.x;
+		const dy = pos.y - w.y;
+		const ox = dx - Math.max(-half, Math.min(half, dx));
+		const oy = dy - Math.max(-half, Math.min(half, dy));
+		if (ox * ox + oy * oy < radius * radius) return true;
+	}
+	return false;
+}
+export function pushOutOfWalls(pos, radius) {
+	for (const w of game.walls) {
+		const half = w.size / 2;
+		const dx = pos.x - w.x;
+		const dy = pos.y - w.y;
+		const cx = Math.max(-half, Math.min(half, dx));
+		const cy = Math.max(-half, Math.min(half, dy));
+		const ox = dx - cx;
+		const oy = dy - cy;
+		const distSq = ox * ox + oy * oy;
+		if (distSq === 0) {
+			// Center is inside the rectangle — push out along the shortest axis.
+			const px = half + radius - Math.abs(dx);
+			const py = half + radius - Math.abs(dy);
+			if (px < py) pos.x += (dx >= 0 ? 1 : -1) * px;
+			else pos.y += (dy >= 0 ? 1 : -1) * py;
+		} else if (distSq < radius * radius) {
+			const dist = Math.sqrt(distSq);
+			const push = (radius - dist) / dist;
+			pos.x += ox * push;
+			pos.y += oy * push;
+		}
+	}
+}
 
 export class Bullet {
 	constructor(pos, angle, tank, shootCfg, gunWidth, shudderMul = 1, sizeOverride = null) {
@@ -299,6 +339,11 @@ export class Bullet {
 			if (sp > this.droneMaxSpeed) this.velocity.mulVal(this.droneMaxSpeed / sp);
 		}
 		this.pos.add(this.velocity);
+		// Bullets, drones, and traps all die on contact with a wall.
+		if (!this.dying && overlapsWall(this.pos, this.size)) {
+			this.startDying();
+			return;
+		}
 		if (this.isTrap) {
 			this.velocity.mulVal(0.97);
 			this.angle += this.velocity.length() * 0.04;
@@ -759,6 +804,7 @@ export class Tank {
 		this.pos.add(this.velocity);
 		const edgeForce = game.room.applyForce(this.pos, this.size, 0.05);
 		this.pos.add(edgeForce);
+		pushOutOfWalls(this.pos, this.size);
 		this.velocity.mulVal(0.92);
 		// Push apart from other live tanks so they don't stack. Each side moves half
 		// the overlap; both tanks run this loop, giving full separation per frame.

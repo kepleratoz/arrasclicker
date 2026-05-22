@@ -1,4 +1,4 @@
-import { Vec2, REGEN_PER_FRAME, lerpColor } from "./utils.js";
+import { Vec2, REGEN_PER_FRAME, lerpColor, darken } from "./utils.js";
 import { state } from "./state.js";
 import { game } from "./game.js";
 import { Bullet } from "./tank.js";
@@ -97,6 +97,9 @@ const HEALER_BULLET_CFG = {
 const BASE_FILL = "#3f3f3f";
 const BODY_FILL = "#58b0d0";
 const BODY_STROKE = "#48646e";
+// Neutral sanctuary uses OSA yellow (#feca3f) — same as the arena-closer zone tile.
+const NEUTRAL_BODY_FILL = "#feca3f";
+const NEUTRAL_BODY_STROKE = darken(NEUTRAL_BODY_FILL);
 const BARREL_FILL = "#b1b3bc";
 const BARREL_STROKE = "#646568";
 const HEALER_FILL = "#e4363b";
@@ -121,11 +124,15 @@ function drawSharpPolygon(ctx, points) {
 }
 
 export class Siege {
-	constructor(tier = 1) {
+	constructor(tier = 1, opts = {}) {
 		const cfg = SANCTUARY_TIERS[tier] ?? SANCTUARY_TIERS[1];
 		this.tier = tier;
-		this.trapCount = cfg.trapCount;
-		this.healerCount = cfg.healerCount;
+		// Neutral sanctuary: no trap launchers, no healer turret, yellow body, untargetable
+		// by enemies (sentries filter it out). Acts as a passive landmark inside the
+		// dominator / arena-closer zone.
+		this.neutral = !!opts.neutral;
+		this.trapCount = this.neutral ? 0 : cfg.trapCount;
+		this.healerCount = this.neutral ? 0 : cfg.healerCount;
 		this.reloadMul = cfg.reloadMul;
 		this.pos = new Vec2();
 		this.angle = 0;
@@ -172,11 +179,11 @@ export class Siege {
 		this.pos.y = game.room.minY + game.room.maxY / 2;
 		this.angle += SPIN_RATE;
 		const now = performance.now();
-		if (now > this.shootTime) {
+		if (!this.neutral && now > this.shootTime) {
 			this.shoot();
 			this.shootTime = now + SHOOT_INTERVAL * this.reloadMul;
 		}
-		this.updateHealerTurret(now);
+		if (!this.neutral) this.updateHealerTurret(now);
 		if (this.health < this.maxHealth) this.health = Math.min(this.maxHealth, this.health + REGEN_PER_FRAME);
 		this.damageBlend *= 0.85;
 		if (this.damageBlend < 0.01) this.damageBlend = 0;
@@ -204,6 +211,7 @@ export class Siege {
 		}
 	}
 	takeDamage(n) {
+		if (this.neutral) return;   // neutral sanctuary is invulnerable.
 		this.health = Math.max(0, this.health - n);
 		this.damageBlend = 1;
 	}
@@ -231,6 +239,19 @@ export class Siege {
 
 		// 2. Bullets — drawn under barrels, over base.
 		for (const b of this.bullets) b.render(ctx);
+
+		if (this.neutral) {
+			// Neutral sanctuary: yellow body only (no barrels, no healer turret).
+			const blendN = state.damageBlendEnabled ? this.damageBlend * 0.5 : 0;
+			ctx.fillStyle = blendN > 0 ? lerpColor(NEUTRAL_BODY_FILL, "#ff5050", blendN) : NEUTRAL_BODY_FILL;
+			ctx.strokeStyle = blendN > 0 ? lerpColor(NEUTRAL_BODY_STROKE, "#7a1a1a", blendN) : NEUTRAL_BODY_STROKE;
+			ctx.lineWidth = lw;
+			ctx.beginPath();
+			ctx.arc(cx, cy, r, 0, Math.PI * 2);
+			ctx.fill();
+			ctx.stroke();
+			return;
+		}
 
 		// 3. Three trapper barrels: render body section + flared nose as TWO separate
 		// sharp polygons each. Strokes overlap at the seam, producing the bisecting

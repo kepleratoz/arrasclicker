@@ -49,6 +49,7 @@ export const triangleTab = new Tab("Triangle", triangleUpgrades, "#e7896d", make
 export const pentagonTab = new Tab("Pentagon", pentagonUpgrades, "#8d6adf", makeShapeData(3, -1, 1), () => state.pentagonsUnlocked);
 export const hexagonTab = new Tab("Hexagon", hexagonUpgrades, "#7adbba", makeShapeData(4, -1, 1), () => state.hexagonsUnlocked);
 export const tankTab = new Tab("Tank Upgrades", tankUpgrades, "#58b0d0", null, () => state.tankCount >= 1);
+tankTab.reorderable = true;   // filters in this tab can be drag-reordered in the upgrade panel.
 
 export const tabs = [
 	generalTab,

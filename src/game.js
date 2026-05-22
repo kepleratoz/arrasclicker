@@ -240,7 +240,18 @@ class Game {
 		const regionTop = 530 * this.scale;
 		const regionBottom = this.height - 8 * this.scale;
 		const upgradeSpacing = 100 * this.scale;
-		const totalContentH = this.currentTab.upgrades.length * upgradeSpacing;
+		// Reorderable tabs (currently just the Tank tab) display their upgrades in
+		// the order described by state.tankFilterOrder, padded with any new indices
+		// so adding a new filter to tankUpgrades doesn't drop it from the panel.
+		const baseUpgrades = this.currentTab.upgrades;
+		let displayUpgrades = baseUpgrades;
+		if (this.currentTab.reorderable) {
+			const order = (state.tankFilterOrder || []).filter((i) => i >= 0 && i < baseUpgrades.length);
+			for (let k = 0; k < baseUpgrades.length; k++) if (!order.includes(k)) order.push(k);
+			state.tankFilterOrder = order;
+			displayUpgrades = order.map((i) => baseUpgrades[i]);
+		}
+		const totalContentH = displayUpgrades.length * upgradeSpacing;
 		const maxScroll = Math.max(0, totalContentH - (regionBottom - regionTop));
 		if (mouse.wheelDelta && mouse.x >= regionX && mouse.x <= regionX + regionW && mouse.y >= regionTop) {
 			this.upgradeScrollTarget = Math.max(0, Math.min(maxScroll, this.upgradeScrollTarget + mouse.wheelDelta));
@@ -253,8 +264,14 @@ class Game {
 		const clipPad = 12 * this.scale;
 		ctx.rect(regionX - clipPad, regionTop - clipPad, regionW + clipPad * 2, regionBottom - regionTop + clipPad * 2);
 		ctx.clip();
-		for (let i = 0; i < this.currentTab.upgrades.length; ++i) {
-			const upgrade = this.currentTab.upgrades[i];
+		const reorder = !!this.currentTab.reorderable;
+		const HANDLE_W = 36 * this.scale;
+		const draggingIdx = reorder ? this.draggingFilterIdx ?? null : null;
+		// Suppress segment-clicks on sliders while a drag is being resolved this frame so
+		// the underlying SliderButton doesn't both reorder and change its value.
+		const dragRelease = draggingIdx !== null && !mouse.left;
+		for (let i = 0; i < displayUpgrades.length; ++i) {
+			const upgrade = displayUpgrades[i];
 			const x = regionX;
 			const y = regionTop + i * upgradeSpacing - this.upgradeScroll;
 			const w = regionW;
@@ -277,17 +294,69 @@ class Game {
 			const hovered = !effectivelyDisabled && mouse.x > x && mouse.y > y && mouse.x < x + w && mouse.y < y + h;
 			const willFire = hovered && mouse.leftRelease;
 
-			upgrade.button.render(ctx, x, y, w, h, "", effectivelyDisabled);
-			if (willFire && desired > 1) {
+			// Briefly mute leftRelease for slider/button callbacks if a reorder drop is
+			// happening this frame, so the dragged slot doesn't also fire its slider value.
+			const savedRelease = mouse.leftRelease;
+			if (dragRelease) mouse.leftRelease = false;
+			const xForButton = reorder ? x + HANDLE_W : x;
+			const wForButton = reorder ? w - HANDLE_W : w;
+			upgrade.button.render(ctx, xForButton, y, wForButton, h, "", effectivelyDisabled);
+			if (dragRelease) mouse.leftRelease = savedRelease;
+			if (willFire && desired > 1 && !dragRelease) {
 				for (let k = 1; k < desired; k++) {
 					if (upgrade.isDisabled()) break;
 					upgrade.button.callback();
 				}
 			}
-			drawText(ctx, upgrade.getLabel(), x + 8 * this.scale, y + 8 * this.scale, false, true, false, 32 * this.scale);
-			drawText(ctx, secondary, x + 8 * this.scale, y + 52 * this.scale, false, true, false, 24 * this.scale);
+			drawText(ctx, upgrade.getLabel(), xForButton + 8 * this.scale, y + 8 * this.scale, false, true, false, 32 * this.scale);
+			drawText(ctx, secondary, xForButton + 8 * this.scale, y + 52 * this.scale, false, true, false, 24 * this.scale);
+
+			// Drag handle: 3-line "≡" glyph on the left, picks up the row when clicked.
+			if (reorder) {
+				const hx = x + 2 * this.scale;
+				const hw = HANDLE_W - 4 * this.scale;
+				const handleHovered = mouse.x >= x && mouse.x <= x + HANDLE_W && mouse.y >= y && mouse.y <= y + h;
+				ctx.fillStyle = handleHovered ? "#555" : "#3a3a3a";
+				ctx.fillRect(hx, y, hw, h);
+				ctx.fillStyle = "#bbb";
+				const lineW = hw * 0.7;
+				const lineH = 4 * this.scale;
+				const lineX = hx + (hw - lineW) / 2;
+				ctx.fillRect(lineX, y + h / 2 - 14 * this.scale, lineW, lineH);
+				ctx.fillRect(lineX, y + h / 2 - 2 * this.scale, lineW, lineH);
+				ctx.fillRect(lineX, y + h / 2 + 10 * this.scale, lineW, lineH);
+				if (handleHovered && mouse.leftClick && this.draggingFilterIdx == null) {
+					this.draggingFilterIdx = i;
+					this.dragFilterPointerY = mouse.y;
+					mouse.leftClick = false;
+				}
+			}
 		}
 		ctx.restore();
+
+		// Reorder-drop: when a drag is released, work out the target index from the
+		// pointer's y and rewrite state.tankFilterOrder.
+		if (reorder && this.draggingFilterIdx != null) {
+			if (mouse.left) {
+				// Render a faint highlight at the would-be drop slot.
+				const target = Math.max(0, Math.min(displayUpgrades.length - 1,
+					Math.floor((mouse.y - regionTop + this.upgradeScroll) / upgradeSpacing)));
+				const ty = regionTop + target * upgradeSpacing - this.upgradeScroll;
+				if (ty + 80 * this.scale >= regionTop && ty <= regionBottom) {
+					ctx.fillStyle = "rgba(255,255,255,0.18)";
+					ctx.fillRect(regionX, ty, regionW, 80 * this.scale);
+				}
+			} else {
+				const target = Math.max(0, Math.min(displayUpgrades.length - 1,
+					Math.floor((mouse.y - regionTop + this.upgradeScroll) / upgradeSpacing)));
+				const order = state.tankFilterOrder.slice();
+				const [moved] = order.splice(this.draggingFilterIdx, 1);
+				order.splice(target, 0, moved);
+				state.tankFilterOrder = order;
+				this.draggingFilterIdx = null;
+				mouse.leftRelease = false;
+			}
+		}
 
 		// Active gold-shape effects, shown as small gold text above the score indicator.
 		// Multiple stacks of the same key collapse to one line showing the combined

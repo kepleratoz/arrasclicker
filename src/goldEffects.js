@@ -1,21 +1,24 @@
 import { game } from "./game.js";
+import { state } from "./state.js";
 
 // Gold-shape effects: temporary buffs granted when a gold shape is destroyed.
-// game.goldEffects = [{ key, label, mul, expiry }] (one entry per kill — multiple kills
-// stack their multipliers multiplicatively, each with its own expiry).
-const GOLD_DURATION_MS = 60000;   // every gold effect lasts 1 minute.
+// Base duration 60s, extended +20s per goldEffectExtensionUpgrades level (0-3).
+const GOLD_BASE_DURATION_MS = 60000;
+function goldDurationMs() {
+	return GOLD_BASE_DURATION_MS + (state.goldEffectExtensionUpgrades || 0) * 20000;
+}
 
 function addGoldEffect(key, label, mul) {
 	const now = performance.now();
 	if (!game.goldEffects) game.goldEffects = [];
-	game.goldEffects.push({ key, label, mul, expiry: now + GOLD_DURATION_MS });
+	game.goldEffects.push({ key, label, mul, expiry: now + goldDurationMs() });
 }
 
 // Grant the effect(s) tied to a destroyed gold shape's type index.
 // 0 Egg, 1 Square (no effect), 2 Triangle, 3 Pentagon, 4 Hexagon.
 export function grantGoldEffect(type) {
 	switch (type) {
-		case 0: addGoldEffect("score", "Score", 2); break;
+		case 0: addGoldEffect("score", "Score", 4); break;
 		case 2: addGoldEffect("clickDamage", "Click Damage", 7); addGoldEffect("clickScore", "Click Score", 7); break;
 		case 3: addGoldEffect("tankDamage", "Tank Damage", 2); addGoldEffect("tankReload", "Tank Reload", 1.5); break;
 		case 4: addGoldEffect("rareChance", "Rare Chance", 6); break;
