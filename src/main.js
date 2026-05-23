@@ -329,7 +329,7 @@ const loadButton = new Button(() => {
 		saveToStorage();
 	} catch (e) {
 		console.error("Load failed:", e);
-		alert("Couldn't load that save — the data looks corrupted or wasn't pasted in full.");
+		alert("Couldn't load that save — " + (e && e.message ? e.message : "data couldn't be parsed") + "\n\nTip: re-copy the full string and try again.");
 	}
 }, "#db9146");
 const shapeAnimButton = new Button(() => { state.shapeDeathAnimEnabled = !state.shapeDeathAnimEnabled; }, "#efc74b");

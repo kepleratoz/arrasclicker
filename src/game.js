@@ -237,7 +237,13 @@ class Game {
 		}
 		const regionX = this.width / 2 + 6 * this.scale;
 		const regionW = (320 * 3 - 20) * this.scale;
-		const regionTop = 530 * this.scale;
+		// Anchor the upgrade list to the bottom of the visible tab grid (rather than
+		// a fixed y) so the panel reclaims the empty space when fewer tabs are unlocked.
+		// Each tab row stride is 70*s and the row height is 50*s; rows start at 320*s.
+		const visibleTabCount = this.tabs.reduce((n, t) => n + (!t.isUnlocked || t.isUnlocked() ? 1 : 0), 0);
+		const tabRows = Math.max(1, Math.ceil(visibleTabCount / 3));
+		// Use the same 20-px stride gap that separates the tab rows themselves.
+		const regionTop = (320 + (tabRows - 1) * 70 + 50 + 20) * this.scale;
 		const regionBottom = this.height - 8 * this.scale;
 		const upgradeSpacing = 100 * this.scale;
 		// Reorderable tabs (currently just the Tank tab) display their upgrades in
@@ -251,7 +257,20 @@ class Game {
 			state.tankFilterOrder = order;
 			displayUpgrades = order.map((i) => baseUpgrades[i]);
 		}
-		const totalContentH = displayUpgrades.length * upgradeSpacing;
+		// Per-upgrade slot height is derived from where the cost text actually
+		// lands: cost-top + 24 (font) + 4 (bottom margin). For "tall" upgrades
+		// (click abilities) the description sits at y+38 and the cost at y+78,
+		// so the button comes out to 106*s. For ordinary upgrades the cost
+		// sits at y+52, giving the existing 80*s slot. Single source of truth.
+		const tallCostY = 78;
+		const normalCostY = 52;
+		const slotH = (u) => {
+			const costY = u && u.tall && typeof u.getDescription === "function" ? tallCostY : normalCostY;
+			return (costY + 24 + 4) * this.scale;
+		};
+		const slotStride = (u) => slotH(u) + 20 * this.scale;
+		let totalContentH = 0;
+		for (const u of displayUpgrades) totalContentH += slotStride(u);
 		const maxScroll = Math.max(0, totalContentH - (regionBottom - regionTop));
 		if (mouse.wheelDelta && mouse.x >= regionX && mouse.x <= regionX + regionW && mouse.y >= regionTop) {
 			this.upgradeScrollTarget = Math.max(0, Math.min(maxScroll, this.upgradeScrollTarget + mouse.wheelDelta));
@@ -270,12 +289,14 @@ class Game {
 		// Suppress segment-clicks on sliders while a drag is being resolved this frame so
 		// the underlying SliderButton doesn't both reorder and change its value.
 		const dragRelease = draggingIdx !== null && !mouse.left;
+		let runningY = regionTop - this.upgradeScroll;
 		for (let i = 0; i < displayUpgrades.length; ++i) {
 			const upgrade = displayUpgrades[i];
 			const x = regionX;
-			const y = regionTop + i * upgradeSpacing - this.upgradeScroll;
+			const y = runningY;
 			const w = regionW;
-			const h = 80 * this.scale;
+			const h = slotH(upgrade);
+			runningY += slotStride(upgrade);
 			if (y + h < regionTop || y > regionBottom) continue;
 
 			const supportsBulk = typeof upgrade.cost === "function";
@@ -309,7 +330,16 @@ class Game {
 				}
 			}
 			drawText(ctx, upgrade.getLabel(), xForButton + 8 * this.scale, y + 8 * this.scale, false, true, false, 32 * this.scale);
-			drawText(ctx, secondary, xForButton + 8 * this.scale, y + 52 * this.scale, false, true, false, 24 * this.scale);
+			// For "tall" upgrades, the effect description goes between the name and
+			// the cost in the same-size font as the cost line, snug under the title
+			// (y+38), with a 40-px stride down to the cost (y+78) — matches the prior
+			// description-to-cost distance.
+			if (upgrade.tall && typeof upgrade.getDescription === "function") {
+				drawText(ctx, upgrade.getDescription(), xForButton + 8 * this.scale, y + 38 * this.scale, false, true, false, 24 * this.scale);
+				drawText(ctx, secondary, xForButton + 8 * this.scale, y + 78 * this.scale, false, true, false, 24 * this.scale);
+			} else {
+				drawText(ctx, secondary, xForButton + 8 * this.scale, y + 52 * this.scale, false, true, false, 24 * this.scale);
+			}
 
 			// Drag handle: 3-line "≡" glyph on the left, picks up the row when clicked.
 			if (reorder) {

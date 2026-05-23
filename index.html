@@ -13,6 +13,17 @@
 				width: 100%;
 				height: 100%;
 			}
+			/* Use a system-installed Ubuntu first so the game works offline when the
+			   font is available locally. If no "Ubuntu Bold" / "Ubuntu-Bold" is found
+			   on the machine, the Google Fonts stylesheet below provides the @font-face
+			   that fetches the WOFF over the network. */
+			@font-face {
+				font-family: "Ubuntu";
+				src: local("Ubuntu Bold"), local("Ubuntu-Bold"), local("Ubuntu");
+				font-weight: 700;
+				font-style: normal;
+				font-display: swap;
+			}
 		</style>
 		<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Ubuntu:700" />
 	</head>

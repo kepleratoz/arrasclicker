@@ -17,6 +17,7 @@ export const state = {
 	lightningOwned: false,
 	poisonOwned: false,
 	midasOwned: false,
+	midasLevel: 0,            // 0 = not owned, 1..4 = each level adds +0.1% conversion chance.
 	equippedClickUpgrade: null,   // null | "lightning" | "poison" | "midas"
 	lightningClickCount: 0,       // every 3rd click triggers the chain.
 	tankRarityCap: 4,
@@ -56,7 +57,7 @@ export const PER_MAP_FIELDS = [
 	"score", "clickDamageUpgrades", "tankCount",
 	"squareBuffUpgrades", "triangleBuffUpgrades", "pentagonBuffUpgrades", "hexagonBuffUpgrades",
 	"eggEvoTimeUpgrades", "squareEvoTimeUpgrades", "triangleEvoTimeUpgrades", "pentagonEvoTimeUpgrades", "hexagonEvoTimeUpgrades",
-	"lightningOwned", "poisonOwned", "midasOwned", "equippedClickUpgrade", "lightningClickCount",
+	"lightningOwned", "poisonOwned", "midasOwned", "midasLevel", "equippedClickUpgrade", "lightningClickCount",
 	"tankRarityCap", "tankForceTypeCap", "tankForceRarityCap",
 	"shapeTypeBuff", "shapeEvoNerf", "layersBuff", "layersCaps", "rarityCap",
 	"squaresUnlocked", "trianglesUnlocked", "pentagonsUnlocked", "hexagonsUnlocked",
@@ -68,7 +69,7 @@ export function freshMapState() {
 		squareBuffUpgrades: 0, triangleBuffUpgrades: 0, pentagonBuffUpgrades: 0, hexagonBuffUpgrades: 0,
 		eggEvoTimeUpgrades: 0, squareEvoTimeUpgrades: 0, triangleEvoTimeUpgrades: 0,
 		pentagonEvoTimeUpgrades: 0, hexagonEvoTimeUpgrades: 0,
-		lightningOwned: false, poisonOwned: false, midasOwned: false,
+		lightningOwned: false, poisonOwned: false, midasOwned: false, midasLevel: 0,
 		equippedClickUpgrade: null, lightningClickCount: 0,
 		tankRarityCap: 4, tankForceTypeCap: -1, tankForceRarityCap: -1,
 		shapeTypeBuff: 1,

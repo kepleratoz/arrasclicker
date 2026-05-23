@@ -1,11 +1,11 @@
 import { state } from "./state.js";
-import { Button, SliderButton } from "./button.js";
+import { Button, SliderButton, RAINBOW } from "./button.js";
 import { colors, formatNumber, darken } from "./utils.js";
 import { shapeTypeFromBuff, shapeRarityFromBuff } from "./shape.js";
 import { syncTanks } from "./tank.js";
 
 const RARITY_TIER_NAMES = ["Normal", "Shiny", "Legendary", "Shadow", "Rainbow"];
-const RARITY_TIER_COLORS = ["#bbbbbb", colors.shiny, colors.legendary, colors.shadow, "#ff5cd4"];
+const RARITY_TIER_COLORS = ["#bbbbbb", colors.shiny, colors.legendary, colors.shadow, RAINBOW];
 // Force-target type slider (parallel to the rarity cap). The slider index maps to
 // state.tankForceTypeCap as (index - 1), so 0=Off (-1), 1=Egg (0), … 5=Hexagon (4).
 const FORCE_TYPE_NAMES  = ["Off", "Egg", "Square", "Triangle", "Pentagon", "Hexagon"];
@@ -39,25 +39,64 @@ export const eggUpgrades = [new EggEvolution(), new EggEvoTime(), new UnlockSqua
 class ClickDamage {
 	button = new Button(() => { state.score -= this.cost(); state.clickDamageUpgrades += 1; }, "#3085db");
 	getLabel() { return "+1 Click Damage (now " + (1 + state.clickDamageUpgrades) + " per click)"; }
-	cost() { return 100 * Math.pow(1e4, state.clickDamageUpgrades); }
+	cost() { return 100 * Math.pow(100, state.clickDamageUpgrades); }
 	getSecondary() { return formatNumber(this.cost()) + " score"; }
 	isDisabled() { return state.score < this.cost(); }
 }
 const CLICK_ABILITIES = {
-	lightning: { label: "Lightning",   cost: 5e19, color: "#f3e96b", ownedFlag: "lightningOwned" },
-	poison:    { label: "Poison",      cost: 5e19, color: "#5cd970", ownedFlag: "poisonOwned"    },
-	midas:     { label: "Midas Touch", cost: 1e20, color: "#d4af37", ownedFlag: "midasOwned"     },
+	lightning: { label: "Lightning",   cost: 3e19, color: "#f3e96b", ownedFlag: "lightningOwned" },
+	poison:    { label: "Poison",      cost: 1e19, color: "#5cd970", ownedFlag: "poisonOwned"    },
 };
 const CLICK_DESCRIPTIONS = {
 	lightning: "Every 3rd click chains lightning to nearby shapes.",
 	poison:    "Clicked shapes take 25% click damage / sec for 10s.",
-	midas:     "0.1% chance per click to convert the shape to gold.",
 };
+// Midas Touch is a 5-level upgrade — the initial purchase counts as the first
+// of the 5. The first three purchases (initial + the first two upgrades) all
+// cost the base 5e16; the 4th doubles it, the 5th triples it. Each level adds
+// +0.1% per-click chance to replace the clicked shape with a random gold shape.
+const MIDAS_COSTS = [5e16, 5e16, 5e16, 1e17, 1.5e17];
+class MidasUpgrade {
+	button = new Button(() => this.activate(), "#d4af37");
+	tall = true;   // upgrade panel renders this slot taller with a separate description row.
+	level() { return state.midasLevel || 0; }
+	isMaxed() { return this.level() >= MIDAS_COSTS.length; }
+	isEquipped() { return state.equippedClickUpgrade === "midas"; }
+	nextCost() { return MIDAS_COSTS[this.level()] ?? Infinity; }
+	activate() {
+		if (!this.isMaxed()) {
+			const c = this.nextCost();
+			if (state.score < c) return;
+			state.score -= c;
+			state.midasLevel = this.level() + 1;
+			state.midasOwned = true;
+			if (state.midasLevel === 1) state.equippedClickUpgrade = "midas";
+			return;
+		}
+		state.equippedClickUpgrade = this.isEquipped() ? null : "midas";
+	}
+	getLabel() {
+		const lvl = this.level();
+		const tag = lvl === 0 ? "" : this.isEquipped() ? " (EQUIPPED)" : " (owned)";
+		return "Midas Touch (" + lvl + "/" + MIDAS_COSTS.length + ")" + tag;
+	}
+	getDescription() {
+		const pct = (0.1 * this.level()).toFixed(1);
+		return pct + "% chance per click to convert into a random gold shape.";
+	}
+	getSecondary() {
+		if (this.isMaxed()) return this.isEquipped() ? "Click to unequip" : "Click to equip";
+		return formatNumber(this.nextCost()) + " score";
+	}
+	// No cost() method → the upgrade panel won't try to bulk-buy via simulateBuy.
+	isDisabled() { return !this.isMaxed() && state.score < this.nextCost(); }
+}
 class ClickAbility {
 	constructor(key) {
 		this.key = key;
 		const a = CLICK_ABILITIES[key];
 		this.button = new Button(() => this.activate(), a.color);
+		this.tall = true;   // upgrade panel renders this slot taller with a separate description row.
 	}
 	isOwned()    { return state[CLICK_ABILITIES[this.key].ownedFlag]; }
 	isEquipped() { return state.equippedClickUpgrade === this.key; }
@@ -75,8 +114,9 @@ class ClickAbility {
 	getLabel() {
 		const a = CLICK_ABILITIES[this.key];
 		const tag = !this.isOwned() ? "" : this.isEquipped() ? " (EQUIPPED)" : " (owned)";
-		return a.label + tag + " — " + CLICK_DESCRIPTIONS[this.key];
+		return a.label + tag;
 	}
+	getDescription() { return CLICK_DESCRIPTIONS[this.key]; }
 	getSecondary() {
 		if (!this.isOwned()) return formatNumber(CLICK_ABILITIES[this.key].cost) + " score";
 		return this.isEquipped() ? "Click to unequip" : "Click to equip";
@@ -85,9 +125,9 @@ class ClickAbility {
 }
 export const clickUpgrades = [
 	new ClickDamage(),
-	new ClickAbility("lightning"),
 	new ClickAbility("poison"),
-	new ClickAbility("midas"),
+	new ClickAbility("lightning"),
+	new MidasUpgrade(),
 ];
 
 // ---------- General ----------
@@ -109,15 +149,20 @@ class SpawnInterval {
 	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score"; }
 	isDisabled() { return this.max() || state.score < this.cost(); }
 }
+// Opaque "shadow" tone for buttons — translucent fills make the border look
+// extra thick (the stroke's inner half shows through), so use a solid dark
+// color here while shape rendering keeps the truly translucent colors.shadow.
+const SHADOW_BUTTON_COLOR = "#3a3a3a";
 // Palette matches the player's highest unlocked rarity so the upgrade button
-// stays visually consistent with the actual top-tier they can spawn.
-const SHINY_PALETTE = [colors.shiny, colors.legendary, "#444444", "#ff5cd4"];
+// stays visually consistent with the actual top-tier they can spawn — including
+// the dark shadow tone at tier 2 and the rolling-hue rainbow at tier 3.
+const SHINY_PALETTE = [colors.shiny, colors.legendary, SHADOW_BUTTON_COLOR, RAINBOW];
 class ShinyChance {
 	button = new Button(() => { state.score -= this.cost(); state.shinyChanceUpgrades += 1; state.shapeRarityBuff *= 1.05; }, colors.shiny);
 	syncColor() {
 		const fill = SHINY_PALETTE[Math.min(SHINY_PALETTE.length - 1, state.rarityCap)];
 		this.button.fill = fill;
-		this.button.stroke = darken(fill, 0.75);
+		this.button.stroke = fill === RAINBOW ? RAINBOW : darken(fill, 0.75);
 	}
 	getLabel() { return "Increase Rare Shapes Chance (" + formatNumber(state.shapeRarityBuff) + "x more)"; }
 	cost() { return 1000 * Math.pow(2, state.shinyChanceUpgrades); }
@@ -296,14 +341,14 @@ class HexagonEvolution {
 	button = new Button(() => { state.score -= this.cost(); state.layersCaps[4] += 1; }, colors.hexagon);
 	getLabel() { return "+1 Evolution (" + (state.layersCaps[4] - 1) + "/5)"; }
 	max() { return state.layersCaps[4] > 5; }
-	cost() { return Math.pow(5, state.layersCaps[4] + 21); }
+	cost() { return Math.pow(5, state.layersCaps[4] + 21) / 10; }
 	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score"; }
 	isDisabled() { return this.max() || state.score < this.cost(); }
 }
 class HexagonEvoTime {
 	button = new Button(() => { state.score -= this.cost(); state.hexagonEvoTimeUpgrades += 1; state.shapeEvoNerf[4] *= 1.25; }, colors.hexagon);
 	getLabel() { return "Decrease Evolution Time (" + formatNumber(state.shapeEvoNerf[4]) + "x less)"; }
-	cost() { return Math.round(Math.pow(8, state.hexagonEvoTimeUpgrades + 11)); }
+	cost() { return Math.round(Math.pow(8, state.hexagonEvoTimeUpgrades + 11) / 10); }
 	getSecondary() { return formatNumber(this.cost()) + " score"; }
 	isDisabled() { return state.score < this.cost(); }
 }
@@ -311,14 +356,14 @@ class HexagonBuff {
 	button = new Button(() => { state.score -= this.cost(); state.hexagonBuffUpgrades += 1; state.shapeTypeBuff *= 1.13; }, colors.hexagon);
 	getLabel() { return "Increase Hexagon Spawn Chance (" + formatNumber(state.shapeTypeBuff) + "x)"; }
 	max() { return state.hexagonBuffUpgrades >= 10; }
-	cost() { return Math.round(Math.pow(2, state.hexagonBuffUpgrades + 42)); }
+	cost() { return Math.round(Math.pow(2, state.hexagonBuffUpgrades + 42) / 10); }
 	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score."; }
 	isDisabled() { return state.score < this.cost() || this.max(); }
 }
 class UnlockRainbow {
-	button = new Button(() => { state.score -= this.cost(); state.rarityCap = Math.max(state.rarityCap, 3); }, "#ff5cd4");
+	button = new Button(() => { state.score -= this.cost(); state.rarityCap = Math.max(state.rarityCap, 3); }, RAINBOW);
 	getLabel() { return "Unlock Rainbow Rarity"; }
-	cost() { return 1e19; }
+	cost() { return 1e18; }
 	// Roll condition: rarity buff must be high enough that rainbow can actually roll.
 	requirement() { return state.rarityCap >= 2 && shapeRarityFromBuff(state.shapeRarityBuff) > 5; }
 	getSecondary() {
@@ -387,7 +432,7 @@ class TankForceRarity {
 export const tankUpgrades = [new TankRarityCap(), new TankForceType(), new TankForceRarity()];
 
 class UnlockShadow {
-	button = new Button(() => { state.score -= this.cost(); state.rarityCap = Math.max(state.rarityCap, 2); }, colors.shadow, "rgba(34,34,34,0.4)");
+	button = new Button(() => { state.score -= this.cost(); state.rarityCap = Math.max(state.rarityCap, 2); }, SHADOW_BUTTON_COLOR);
 	getLabel() { return "Unlock Shadow Rarity"; }
 	cost() { return 5e10; }
 	requirement() { return state.rarityCap >= 1 && shapeRarityFromBuff(state.shapeRarityBuff) > 4; }

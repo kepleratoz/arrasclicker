@@ -301,31 +301,32 @@ function resetLabel() {
 export function renderDebugPanel(ctx) {
 	if (!debugVisible) return;
 	const s = game.scale;
-	const w = 200 * s;
-	const h = 40 * s;
+	const w = 170 * s;
+	const h = 28 * s;
 	const margin = 6 * s;
+	const gap = 3 * s;
 	const x = game.width - w - margin;
 	let y = margin;
 	toggleButton.render(ctx, x, y, w, h, panelOpen ? "DEBUG ▲" : "DEBUG ▼", false);
 	if (panelOpen) {
 		for (let i = 0; i < actions.length; ++i) {
-			y += h + 4 * s;
+			y += h + gap;
 			const label = typeof actions[i].label === "function" ? actions[i].label() : actions[i].label;
 			actionButtons[i].render(ctx, x, y, w, h, label, false);
 		}
-		y += h + 4 * s;
+		y += h + gap;
 		spawnModeBtn.render(ctx, x, y, w, h, game.debugMode === "spawn" ? "Spawn Mode ✓" : "Spawn Mode", false);
-		y += h + 4 * s;
+		y += h + gap;
 		upgradeModeBtn.render(ctx, x, y, w, h, game.debugMode === "upgrade" ? "Upgrade Mode ✓" : "Upgrade Mode", false);
-		y += h + 4 * s;
+		y += h + gap;
 		editionModeBtn.render(ctx, x, y, w, h, game.debugMode === "edition" ? "Edition Mode ✓" : "Edition Mode", false);
-		y += h + 4 * s;
+		y += h + gap;
 		damageModeBtn.render(ctx, x, y, w, h, game.debugMode === "damage" ? "Damage Mode ✓" : "Damage Mode", false);
-		y += h + 4 * s;
+		y += h + gap;
 		resetTankModeBtn.render(ctx, x, y, w, h, game.debugMode === "resetTank" ? "Reset Tank ✓" : "Reset Tank", false);
-		y += h + 4 * s;
+		y += h + gap;
 		mapEditorModeBtn.render(ctx, x, y, w, h, game.debugMode === "mapEditor" ? "Map Editor ✓" : "Map Editor", false);
-		y += h + 12 * s;
+		y += h + 10 * s;
 		resetButton.render(ctx, x, y, w, h, resetLabel(), false);
 	}
 

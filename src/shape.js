@@ -232,7 +232,13 @@ export class Shape {
 				if (mouse.leftClick) {
 					const baseDmg = (1 + (state.clickDamageUpgrades || 0)) * goldClickDamageMul();
 					const equipped = state.equippedClickUpgrade;
-					if (equipped === "midas" && Math.random() < 0.001) this.makeGold(this.type);
+					// Midas Touch: 0.1% per level (max 0.4% at level 4). Converts the shape
+				// into a RANDOM eligible gold-type, not the shape's own type.
+				const midasChance = 0.001 * (state.midasLevel || 0);
+				if (equipped === "midas" && midasChance > 0 && Math.random() < midasChance) {
+					const types = eligibleGoldTypes();
+					this.makeGold(types[Math.floor(Math.random() * types.length)]);
+				}
 					this._applyHit(baseDmg);
 					if (equipped === "poison" && !this.dying) {
 						this.poisonEnd = performance.now() + 10000;
