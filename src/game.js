@@ -323,7 +323,7 @@ class Game {
 			const wForButton = reorder ? w - HANDLE_W : w;
 			upgrade.button.render(ctx, xForButton, y, wForButton, h, "", effectivelyDisabled);
 			if (dragRelease) mouse.leftRelease = savedRelease;
-			if (willFire && desired > 1 && !dragRelease) {
+			if (willFire && desired > 1 && !dragRelease && !this.mapOverlayOpen) {
 				for (let k = 1; k < desired; k++) {
 					if (upgrade.isDisabled()) break;
 					upgrade.button.callback();

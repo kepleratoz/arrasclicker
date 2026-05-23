@@ -3,7 +3,7 @@ import { Vec2, darken, colors, formatNumber, REGEN_PER_FRAME, lerpColor } from "
 import { mouse } from "./input.js";
 import { drawPolygon, drawHealthBar } from "./render.js";
 import { game } from "./game.js";
-import { Bullet, tankCanTarget } from "./tank.js";
+import { Bullet, tankCanTarget, pushOutOfWalls } from "./tank.js";
 import { grantGoldEffect, goldRareChanceMul, goldClickDamageMul, goldClickScoreMul, goldScoreMul } from "./goldEffects.js";
 
 // Gold-shape constants.
@@ -262,6 +262,7 @@ export class Shape {
 		this.evoTime -= this.velocity.length() * 10;
 		this.angle += (0.1 + this.velocity.length()) / 150;
 		this.pos.add(this.velocity);
+		pushOutOfWalls(this.pos, this.size);
 		this.velocity.mulVal(0.98);
 	}
 	render(ctx) {
@@ -446,15 +447,16 @@ const BARREL_FILL = "#b1b3bc";
 const BARREL_STROKE = "#646568";
 
 export class Sentry extends Shape {
-	constructor(pos) {
+	constructor(pos, opts = {}) {
 		super(pos);
+		this.neutral = !!opts.neutral;
 		this.size = SENTRY_SIZE;
 		this.drawSize = SENTRY_SIZE;
 		this.maxHealth = SENTRY_HEALTH;
 		this.health = SENTRY_HEALTH;
 		this.maxShield = 0;
 		this.shield = 0;
-		this.fillStyle = SENTRY_FILL;
+		this.fillStyle = this.neutral ? "#feca3f" : SENTRY_FILL;
 		this.strokeStyle = darken(this.fillStyle);
 		this.sides = 3;
 		this.type = 2;          // triangle (for tank targeting compatibility)
@@ -483,12 +485,18 @@ export class Sentry extends Shape {
 		this.dying = state.shapeDeathAnimEnabled ? 1 : DEATH_FRAMES + 1;
 	}
 	takeDamage(n) {
+		if (this.neutral) return;   // neutral sentries are invulnerable landmarks.
 		if (this.isDead()) return;
 		this.health = Math.max(0, this.health - n);
 		this.damageBlend = 1;
 		if (this.health <= 0) this.startDying();
 	}
 	update() {
+		// Neutral sentries are passive: no shooting, no movement, no click damage.
+		if (this.neutral) {
+			this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
+			return;
+		}
 		if (this.dying) {
 			this.dying += 1;
 			this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
@@ -540,6 +548,7 @@ export class Sentry extends Shape {
 			this.velocity.x = tanX * SENTRY_MOVE_SPEED + radX * radialError * SENTRY_RADIAL_CORRECTION;
 			this.velocity.y = tanY * SENTRY_MOVE_SPEED + radY * radialError * SENTRY_RADIAL_CORRECTION;
 			this.pos.add(this.velocity);
+			pushOutOfWalls(this.pos, this.size);
 			// Body faces the direction it's moving in.
 			if (this.velocity.x !== 0 || this.velocity.y !== 0) {
 				this.angle = Math.atan2(this.velocity.y, this.velocity.x);
@@ -644,5 +653,158 @@ export class Sentry extends Shape {
 		if (!this.dying) {
 			drawHealthBar(ctx, cx, cy, r, this.health, this.maxHealth, game.scale);
 		}
+	}
+}
+
+// ---------- Sentry Sanctuary ----------
+// A large pink triangle that periodically births a Sentry from a single barrel
+// (OSA Enchantress-style spawner). Tracks living children up to a cap so it
+// doesn't flood the field.
+const SS_SIZE = 80;
+const SS_HEALTH = 2500;
+const SS_BODY_DAMAGE = 2;
+const SS_REGEN = 0.08;              // per frame (~5 HP/sec at 60fps).
+const SS_SPAWN_INTERVAL_MS = 8000;
+const SS_MAX_CHILDREN = 16;
+const SS_SPIN_RATE = 0.004;
+const SS_BARRELS = 3;               // one director-style barrel per triangle side.
+const SS_BARREL_LEN = 1.1;          // in body-radius units (distance from side midpoint outward).
+const SS_BARREL_INNER_W = 0.55;     // base width, in body-radius units.
+const SS_BARREL_OUTER_W = 0.95;     // flared tip — director style.
+const SS_BARREL_INSET = 0.18;       // how far the barrel base is recessed inside the body.
+const SS_RECOIL_IMPULSE = 0.18;
+const SS_RECOIL_SPRING = 0.2;
+const SS_RECOIL_DAMP = 0.5;
+
+export class SentrySanctuary extends Shape {
+	constructor(pos) {
+		super(pos);
+		this.size = SS_SIZE;
+		this.drawSize = SS_SIZE;
+		this.maxHealth = SS_HEALTH;
+		this.health = SS_HEALTH;
+		this.fillStyle = SENTRY_FILL;
+		this.strokeStyle = darken(this.fillStyle);
+		this.sides = 3;
+		this.type = 2;             // triangle, for any incidental tank-target logic.
+		this.rarity = -1;
+		this.layers = 1;
+		this.score = 0;
+		this.isSentrySanctuary = true;
+		this.damageType = 0;
+		this.damage = SS_BODY_DAMAGE;
+		this.penetration = 3;
+		this.resist = 1 - 1 / 8.25;
+		this.angle = Math.random() * Math.PI * 2;
+		this.children = [];
+		this.spawnTime = 0;
+		this.nextBarrelIdx = 0;
+		this.barrelStates = Array.from({ length: SS_BARRELS }, () => ({ position: 0, motion: 0 }));
+	}
+	startDying() {
+		if (this.dying) return;
+		this.dying = state.shapeDeathAnimEnabled ? 1 : DEATH_FRAMES + 1;
+	}
+	takeDamage(n) {
+		if (this.isDead()) return;
+		this.health = Math.max(0, this.health - n);
+		this.damageBlend = 1;
+		if (this.health <= 0) this.startDying();
+	}
+	update() {
+		if (this.dying) {
+			this.dying += 1;
+			this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
+			return;
+		}
+		this.angle += SS_SPIN_RATE;
+		if (this.health < this.maxHealth) this.health = Math.min(this.maxHealth, this.health + SS_REGEN);
+		this.damageBlend *= 0.85;
+		if (this.damageBlend < 0.01) this.damageBlend = 0;
+		this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
+		// Drop any children that died this frame.
+		this.children = this.children.filter((c) => c && !(c.isFullyDead && c.isFullyDead()));
+		const now = performance.now();
+		if (this.children.length < SS_MAX_CHILDREN && now > this.spawnTime) {
+			// Cycle through the 3 side-mounted barrels so the spawner feels alive.
+			const i = this.nextBarrelIdx;
+			const dir = this.angle + Math.PI / 3 + i * (Math.PI * 2 / 3);
+			const tipR = this.size * 0.5 + SS_BARREL_LEN * this.size;
+			const tipX = this.pos.x + Math.cos(dir) * tipR;
+			const tipY = this.pos.y + Math.sin(dir) * tipR;
+			const child = new Sentry(new Vec2(tipX, tipY));
+			child.velocity = Vec2.circle(dir, 3);
+			this.children.push(child);
+			game.shapes.push(child);
+			this.spawnTime = now + SS_SPAWN_INTERVAL_MS;
+			this.barrelStates[i].motion += SS_RECOIL_IMPULSE;
+			this.nextBarrelIdx = (i + 1) % SS_BARRELS;
+		}
+		// Recoil spring per barrel.
+		for (const gs of this.barrelStates) {
+			gs.motion -= SS_RECOIL_SPRING * gs.position;
+			gs.position += gs.motion;
+			if (gs.position < 0) { gs.position = 0; gs.motion = -gs.motion; }
+			if (gs.motion > 0) gs.motion *= SS_RECOIL_DAMP;
+		}
+	}
+	render(ctx) {
+		const sc = game.scale * game.room.fov;
+		const cx = this.pos.x * sc;
+		const cy = this.pos.y * sc;
+		const fade = this.dying ? Math.max(0, 1 - this.dying / DEATH_FRAMES) : 1;
+		const sizeMul = 1 + 0.5 * (1 - fade);
+		const r = this.drawSize * sizeMul * sc;
+		const lw = 4 * sc;
+		ctx.globalAlpha = fade;
+		// Director-style barrels: trapezoid that widens at the tip, one mounted on
+		// each side of the triangle. Drawn under the body so the body covers the
+		// inset base of each barrel.
+		const sideMid = r * 0.5;                   // apothem of equilateral triangle.
+		const barrelLen = SS_BARREL_LEN * r;
+		const innerHW = (SS_BARREL_INNER_W / 2) * r;
+		const outerHW = (SS_BARREL_OUTER_W / 2) * r;
+		const inset = SS_BARREL_INSET * r;
+		ctx.fillStyle = "#b1b3bc";
+		ctx.strokeStyle = "#646568";
+		ctx.lineWidth = lw;
+		ctx.lineJoin = "round";
+		for (let i = 0; i < SS_BARRELS; i++) {
+			const dir = this.angle + Math.PI / 3 + i * (Math.PI * 2 / 3);
+			const recoil = this.barrelStates[i].position * r;
+			ctx.save();
+			ctx.translate(cx, cy);
+			ctx.rotate(dir);
+			ctx.beginPath();
+			const baseX = sideMid - inset - recoil;
+			const tipX = sideMid + barrelLen - recoil;
+			ctx.moveTo(baseX, -innerHW);
+			ctx.lineTo(tipX, -outerHW);
+			ctx.lineTo(tipX, outerHW);
+			ctx.lineTo(baseX, innerHW);
+			ctx.closePath();
+			ctx.fill();
+			ctx.stroke();
+			ctx.restore();
+		}
+		// Triangle body with red flash on damage.
+		const blend = state.damageBlendEnabled ? this.damageBlend * 0.5 : 0;
+		ctx.fillStyle = blend > 0 ? lerpColor(this.fillStyle, "#ff5050", blend) : this.fillStyle;
+		ctx.strokeStyle = blend > 0 ? lerpColor(this.strokeStyle, "#7a1a1a", blend) : this.strokeStyle;
+		ctx.lineWidth = lw;
+		ctx.lineJoin = "round";
+		ctx.beginPath();
+		for (let i = 0; i < 3; i++) {
+			const a = this.angle + (i / 3) * Math.PI * 2;
+			const x = cx + Math.cos(a) * r;
+			const y = cy + Math.sin(a) * r;
+			if (i === 0) ctx.moveTo(x, y);
+			else ctx.lineTo(x, y);
+		}
+		ctx.closePath();
+		ctx.fill();
+		ctx.stroke();
+		ctx.globalAlpha = 1;
+		if (!this.dying) drawHealthBar(ctx, cx, cy, r, this.health, this.maxHealth, game.scale);
 	}
 }

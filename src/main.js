@@ -12,7 +12,7 @@ import { syncTanks, tankUnderMouse, renderTankPreview, snapshotTanks, TANK_UPGRA
 import { Siege } from "./siege.js";
 import { TANK_DEFS } from "./tankDefs.js";
 import { formatNumber, darken, colors } from "./utils.js";
-import { switchToMap, checkMap1Unlock, hasSanctuaryOnMap0 } from "./mapSwitch.js";
+import { switchToMap, checkMap1Unlock, ensureCrashZoneSeeded, shouldHaveNeutralSanctuary } from "./mapSwitch.js";
 
 let upgradePanelAnim = 1;
 let upgradePanelLastTank = null;
@@ -312,6 +312,7 @@ game.init({ Room, tabs, generalTab });
 
 loadFromStorage();
 syncTanks();
+ensureCrashZoneSeeded();   // seed walls + neutral sentry if loading directly into Map 1.
 // Sanctuary no longer auto-spawns; toggle it via the debug panel.
 onBeforeSave(snapshotTanks);
 enableAutoSave();
@@ -377,24 +378,41 @@ function mulberry32(seed) {
 		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 	};
 }
+// Each island is a separate hex blob: tiles inside `baseRadius` always included,
+// a probabilistic frayed ring just outside. Spacing between island centers is
+// wide enough that the rings don't bridge into each other.
+const ISLANDS = [
+	{ center: { q:  0, r:  0 }, baseRadius: 3, fringeProb: 0.7 },   // Origin / Crash Zone island.
+	{ center: { q: -9, r:  4 }, baseRadius: 2, fringeProb: 0.6 },   // west.
+	{ center: { q:  8, r: -6 }, baseRadius: 2, fringeProb: 0.5 },   // northeast.
+	{ center: { q:  4, r:  7 }, baseRadius: 2, fringeProb: 0.6 },   // south.
+	{ center: { q: -6, r: -5 }, baseRadius: 1, fringeProb: 0.5 },   // small northwest islet.
+];
 const CONTINENT = (() => {
-	const out = [];
 	const rand = mulberry32(0xC0FFEE);
-	for (let q = -6; q <= 6; q++) {
-		for (let r = -6; r <= 6; r++) {
-			const dist = (Math.abs(q) + Math.abs(q + r) + Math.abs(r)) / 2;
-			if (dist <= 4) out.push({ q, r });
-			else if (dist === 5 && rand() < 0.65) out.push({ q, r });
-			else if (dist === 6 && rand() < 0.22) out.push({ q, r });
+	const tiles = new Map();
+	for (const island of ISLANDS) {
+		const { q: cq, r: cr } = island.center;
+		const span = island.baseRadius + 1;
+		for (let q = cq - span; q <= cq + span; q++) {
+			for (let r = cr - span; r <= cr + span; r++) {
+				const dq = q - cq;
+				const dr = r - cr;
+				const dist = (Math.abs(dq) + Math.abs(dq + dr) + Math.abs(dr)) / 2;
+				if (dist <= island.baseRadius) {
+					tiles.set(q + "," + r, { q, r });
+				} else if (dist === island.baseRadius + 1 && rand() < island.fringeProb) {
+					tiles.set(q + "," + r, { q, r });
+				}
+			}
 		}
 	}
 	// Ensure every real area's tile is included even if its slot was rolled out.
-	const have = new Set(out.map((t) => t.q + "," + t.r));
 	for (const a of MAP_AREAS) {
 		const k = a.q + "," + a.r;
-		if (!have.has(k)) { out.push({ q: a.q, r: a.r }); have.add(k); }
+		if (!tiles.has(k)) tiles.set(k, { q: a.q, r: a.r });
 	}
-	return out;
+	return [...tiles.values()];
 })();
 
 function hexPath(ctx, cx, cy, r) {
@@ -424,6 +442,72 @@ function pointInHex(px, py, cx, cy, r) {
 // Map tab — full-width button sitting above the upgrade tabs. Same height (50)
 // as the per-category tab buttons; wider so it spans from the left edge to the
 // right edge of the upgrade panel. Visible once Map 1 is unlocked.
+// Click-to-repair: clicking a neutral sanctuary selects it and shows a "Repair
+// Sanctuary" button above it. Pressing the button pays e12 score and replaces
+// the neutral siege with a real tier-1 sanctuary at the same spot.
+const REPAIR_COST = 1e14;
+function handleSanctuaryRepair() {
+	if (game.mapOverlayOpen || game.debugMode || game.controlledTank) return;
+	const ctx = game.ctx;
+	const s = game.scale;
+	const sc = game.scale * game.room.fov;
+
+	// Selection on click: nearest neutral sanctuary under the cursor.
+	if (mouse.leftRelease) {
+		let hitNeutral = null;
+		for (const sg of game.sieges) {
+			if (!sg.neutral) continue;
+			const dx = mouse.x - sg.pos.x * sc;
+			const dy = mouse.y - sg.pos.y * sc;
+			if (Math.sqrt(dx * dx + dy * dy) <= sg.size * sc) { hitNeutral = sg; break; }
+		}
+		if (hitNeutral) {
+			game.selectedSanctuary = hitNeutral;
+			mouse.leftRelease = false;
+		}
+	}
+
+	const sel = game.selectedSanctuary;
+	if (!sel || sel.health <= 0 || !game.sieges.includes(sel)) {
+		game.selectedSanctuary = null;
+		return;
+	}
+	// Button geometry: sits just above the sanctuary on screen.
+	const w = 220 * s;
+	const h = 50 * s;
+	const x = sel.pos.x * sc - w / 2;
+	const y = sel.pos.y * sc - sel.size * sc - 24 * s - h;
+	const hovered = mouse.x >= x && mouse.x <= x + w && mouse.y >= y && mouse.y <= y + h;
+	const affordable = state.score >= REPAIR_COST;
+	const pressed = hovered && mouse.left && affordable;
+	const fill = affordable ? "#58b0d0" : "#888";
+	const stroke = darken(fill, 0.75);
+	ctx.lineWidth = 8 * s;
+	ctx.strokeStyle = "#222";
+	ctx.strokeRect(x, y, w, h);
+	ctx.fillStyle = pressed ? stroke : fill;
+	ctx.fillRect(x, y, w, h);
+	ctx.fillStyle = pressed ? fill : stroke;
+	const darkH = Math.min(h * 0.4, 32 * s);
+	ctx.fillRect(x, y + h - darkH, w, darkH);
+	if (hovered && affordable) {
+		ctx.fillStyle = "rgba(255,255,255,0.1)";
+		ctx.fillRect(x, y, w, h);
+	}
+	drawText(ctx, "Repair Sanctuary", x + w / 2, y + h / 2 - 7 * s, false, true, true, 20 * s);
+	drawText(ctx, formatNumber(REPAIR_COST) + " score", x + w / 2, y + h / 2 + 14 * s, !affordable, true, true, 16 * s);
+	if (hovered && affordable && mouse.leftRelease) {
+		state.score -= REPAIR_COST;
+		const idx = game.sieges.indexOf(sel);
+		if (idx >= 0) game.sieges.splice(idx, 1);
+		game.sieges.push(new Siege(1));
+		game.selectedSanctuary = null;
+		mouse.leftRelease = false;
+	}
+	// Clicking elsewhere (handled by leftRelease still being set) deselects.
+	if (mouse.leftRelease) game.selectedSanctuary = null;
+}
+
 function renderMapTab() {
 	checkMap1Unlock();
 	if (!state.map1Unlocked) return;
@@ -440,10 +524,14 @@ function renderMapTab() {
 	drawText(ctx, "Map  —  " + MAP_AREAS[state.currentMap].label, x + w / 2, y + h / 2, false, true, true, 24 * s);
 	if (hovered && mouse.leftRelease) {
 		game.mapOverlayOpen = true;
-		// Reset pan + zoom so each open lands centered.
-		game.mapZoom = game.mapZoomTarget = 1;
-		game.mapPanX = game.mapPanY = 0;
-		game.mapPanTargetX = game.mapPanTargetY = 0;
+		// Start zoomed in on Origin. Origin is drawn at world (width/2, height/2+40s);
+		// to keep it under that screen point at zoom > 1, set pan = world * (1-zoom).
+		const zoom = 2;
+		const cxOrigin = game.width / 2;
+		const cyOrigin = game.height / 2 + 40 * s;
+		game.mapZoom = game.mapZoomTarget = zoom;
+		game.mapPanX = game.mapPanTargetX = cxOrigin * (1 - zoom);
+		game.mapPanY = game.mapPanTargetY = cyOrigin * (1 - zoom);
 		game.mapDragging = false;
 		game.mapDragMoved = false;
 		mouse.leftRelease = false;
@@ -634,8 +722,9 @@ function renderMapOverlay() {
 function frame(now) {
 	const overlayOpen = !!game.mapOverlayOpen;
 	if (!overlayOpen) {
-		// Auto-spawn / despawn the Neutral Sanctuary (see commentary above renderMapOverlay).
-		const allowNeutral = state.arenaFovUpgrades >= 1 && hasSanctuaryOnMap0();
+		// Auto-spawn / despawn the Neutral Sanctuary. The gate lives in mapSwitch.js
+		// and is always-true on Crash Zone (so the user can find and repair it).
+		const allowNeutral = shouldHaveNeutralSanctuary();
 		const neutralIdx = game.sieges.findIndex((s) => s.neutral);
 		if (allowNeutral && neutralIdx < 0) {
 			game.sieges.push(new Siege(1, { neutral: true }));
@@ -651,14 +740,17 @@ function frame(now) {
 		handleTankClicks();
 		game.update();
 	}
-	game.render(drawText);
 	// While the overlay is open, suppress mouse clicks so background buttons /
-	// tabs don't fire when the user clicks a hexagon. Saved values are restored
-	// before renderMapOverlay so its own hit-tests still work.
+	// tabs / upgrade rows don't fire when the user clicks a hexagon. Saved
+	// values are restored before renderMapOverlay so its own hit-tests still work.
+	// Suppression happens *before* game.render() so the upgrade panel inside it
+	// also stops processing clicks.
 	const savedClick = mouse.leftClick;
 	const savedRelease = mouse.leftRelease;
 	const savedWheel = mouse.wheelDelta;
 	if (overlayOpen) { mouse.leftClick = false; mouse.leftRelease = false; mouse.wheelDelta = 0; }
+	game.render(drawText);
+	if (!overlayOpen) handleSanctuaryRepair();
 	try {
 		saveButton.render(game.ctx, 6 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Save", false);
 		loadButton.render(game.ctx, 106 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Load", false);

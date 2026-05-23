@@ -2,6 +2,15 @@ import { state, PER_MAP_FIELDS, freshMapState } from "./state.js";
 import { game } from "./game.js";
 import { syncTanks, snapshotTanks } from "./tank.js";
 import { generalTab } from "./tabs.js";
+import { Siege } from "./siege.js";
+
+// Crash Zone (map idx 1) gets a fixed wall layout — a ring of half-walls and
+// four corner blocks framing a central plaza. Coords are world-space, matching
+// the exported tilemap format from the debug map editor (cellSize 140).
+const CRASH_ZONE_WALL_HALF = 140;
+// Crash Zone walls temporarily disabled. Re-add tuples like [x, y] (each a half
+// wall snapped to the editor grid) to restore the ring.
+const CRASH_ZONE_WALLS = [];
 
 // Live (non-serializable) per-map containers. Maps share `state.maps[i]` for plain
 // upgrade snapshots; live game objects (shapes/walls/etc.) sit here so save/load
@@ -36,6 +45,27 @@ function applyMap(idx) {
 	for (const k of WORLD_KEYS) game[k] = w[k];
 	game.tanks = [];
 	syncTanks();
+	if (idx === 1) ensureCrashZoneSeeded();
+}
+
+// Seed Crash Zone's fixed wall layout the first time we land on Map 1. The
+// central neutral sanctuary itself is handled by the auto-spawn in main.js,
+// which is unconditional on Map 2 (so the player can find and repair it).
+// Idempotent: walls aren't duplicated on repeat calls.
+export function ensureCrashZoneSeeded() {
+	if (state.currentMap !== 1) return;
+	for (const [wx, wy] of CRASH_ZONE_WALLS) {
+		const dup = game.walls.some((w) => w.x === wx && w.y === wy && w.size === CRASH_ZONE_WALL_HALF);
+		if (!dup) game.walls.push({ x: wx, y: wy, size: CRASH_ZONE_WALL_HALF });
+	}
+}
+// Tracks Crash-Zone-specific spawning rules: the neutral sanctuary should always
+// appear on Map 1 (so the user can repair it), regardless of Map 0 state.
+export function shouldHaveNeutralSanctuary() {
+	const hasRealHere = game.sieges.some((s) => !s.neutral);
+	if (hasRealHere) return false;
+	if (state.currentMap === 1) return true;            // Crash Zone always has one.
+	return state.arenaFovUpgrades >= 1 && hasSanctuaryOnMap0();
 }
 
 export function switchToMap(idx) {

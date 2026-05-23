@@ -49,7 +49,8 @@ export class Button {
 			ctx.fillStyle = "rgba(0,0,0,0.2)";
 			ctx.fillRect(x, y, w, h);
 		}
-		if (hovered && mouse.leftRelease) this.callback();
+		// Hard block: when the map overlay is open, no button under it may fire.
+		if (hovered && mouse.leftRelease && !game.mapOverlayOpen) this.callback();
 	}
 }
 
@@ -92,7 +93,8 @@ export class SliderButton {
 			drawText(ctx, this.values[i], sx + segW / 2, segY + segH / 2, false, true, true, 18 * game.scale);
 		}
 		const hovered = mouse.x > x && mouse.y > y && mouse.x < x + w && mouse.y < y + h;
-		if (hovered && mouse.leftRelease && mouse.y >= segY && mouse.y <= segY + segH) {
+		// Hard block while the map overlay is open.
+		if (hovered && mouse.leftRelease && !game.mapOverlayOpen && mouse.y >= segY && mouse.y <= segY + segH) {
 			const idx = Math.floor((mouse.x - x - padX) / segW);
 			if (idx >= 0 && idx < this.values.length) this.setValue(idx);
 		}

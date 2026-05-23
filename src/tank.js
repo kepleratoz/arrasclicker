@@ -71,6 +71,7 @@ function tankSkill(tank, key) { return osaCurve(up(tank, key), TANK_SKILL_CAPS[k
 function tankShootInterval(tank) { return BASE_SHOOT_INTERVAL * Math.pow(0.5, tankSkill(tank, "reload")) * goldTankReloadMul(); }
 export function tankCanTarget(shape) {
 	if (shape.isGold) return false;
+	if (shape.neutral) return false;   // neutral sentries / sanctuaries are landmarks, never targeted.
 	// Two independent gates:
 	//   • Rarity cap (`state.tankRarityCap`): blocks high-rarity shapes the player wants
 	//     to leave alone (e.g. "don't target Legendaries and above").

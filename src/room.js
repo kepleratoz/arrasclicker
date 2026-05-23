@@ -41,11 +41,17 @@ export class Room {
 			const nestH = nestWorld * sc;
 			const nestX = (this.minX + this.maxX / 2) * sc - nestW / 2;
 			const nestY = (this.minY + this.maxY / 2) * sc - nestH / 2;
-			// Map 2 uses the OSA dominator/arena-closer yellow (#feca3f); Map 1 keeps
-			// its original purple nest tint so the neutral color is reserved for Map 2.
-			ctx.fillStyle = state.currentMap === 1
-				? "rgba(254,202,63,0.32)"
-				: "rgba(181,142,253,0.32)";
+			// Map 2 starts in dominator yellow; once the central neutral sanctuary is
+			// repaired into a real one, the tile flips to sanctuary blue to signal it.
+			// Map 1 keeps its purple nest tint.
+			let nestColor;
+			if (state.currentMap === 1) {
+				const repaired = game.sieges.some((s) => !s.neutral);
+				nestColor = repaired ? "rgba(88,176,208,0.32)" : "rgba(254,202,63,0.32)";
+			} else {
+				nestColor = "rgba(181,142,253,0.32)";
+			}
+			ctx.fillStyle = nestColor;
 			ctx.fillRect(nestX, nestY, nestW, nestH);
 		}
 		ctx.beginPath();
