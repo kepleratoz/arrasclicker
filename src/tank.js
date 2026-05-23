@@ -85,6 +85,34 @@ function tankCanLockOn(shape) { return tankCanTarget(shape) && shape.rarity !== 
 function tankDamageMul(shape) { return shape.rarity === 4 ? 0.1 : 1; }
 function tankBaseDamage(tank) { return osaApply(3, tankSkill(tank, "damage")) * goldTankDamageMul(); }
 function tankBulletLife() { return BASE_BULLET_LIFE; }
+// Effective weapon range in world units. For drone tanks (Director-style: any
+// gun with shoot.isDrone) we use the Basic tank's projectile range × 3, since
+// drones don't expire from age and their roaming radius isn't a bullet-life
+// formula. Other tanks return the maximum (speed × life) across their guns.
+function tankRange(tank) {
+	const def = TANK_DEFS[tank.defKey];
+	if (!def || !def.guns) return BULLET_SPEED * BASE_BULLET_LIFE;
+	let hasDrone = false;
+	let best = 0;
+	for (const gun of def.guns) {
+		if (!gun.shoot) continue;
+		if (gun.shoot.isDrone) { hasDrone = true; continue; }
+		const speedMul = gun.shoot.speed ?? 1;
+		const rangeMul = gun.shoot.range ?? 1;
+		const isTrap = !!gun.shoot.isTrap;
+		const upgradeSpeedMul = gun.shoot.ignoreUpgradeSpeed
+			? 1
+			: isTrap ? 1 + (tankBulletSpeedMul(tank) - 1) * 0.5 : tankBulletSpeedMul(tank);
+		const speed = BULLET_SPEED * speedMul * upgradeSpeedMul;
+		const life = BASE_BULLET_LIFE * rangeMul * (isTrap ? 3 : 1);
+		best = Math.max(best, speed * life);
+	}
+	if (hasDrone) {
+		const basicRange = BULLET_SPEED * tankBulletSpeedMul(tank) * BASE_BULLET_LIFE;
+		return Math.max(best, basicRange * 3);
+	}
+	return best || BULLET_SPEED * BASE_BULLET_LIFE;
+}
 function tankBulletHealth(tank) { return 5 * osaApply(2, tankSkill(tank, "bulletHealth")); }
 function tankSpeed(tank) { return BASE_TANK_SPEED * osaApply(0.8, tankSkill(tank, "speed")); }
 function tankBulletSpeedMul(tank) { return osaApply(1.5, tankSkill(tank, "bulletSpeed")); }
@@ -398,17 +426,20 @@ export class Bullet {
 			return;
 		}
 		if (this.isHeal) {
-			// Heal bullets behave like normal bullets, except: on contact with an INJURED
-			// tank they restore health and instantly break. They still flow into the shape
-			// collision below (with damage=0 they only take damage), so shapes/enemy bullets
-			// can intercept them just like ordinary projectiles.
+			// Heal bullets behave like normal bullets, except: on contact with a tank
+			// that has anything to top up (shield or health) they restore one or the
+			// other and instantly break. Shield is healed first when it's missing —
+			// it tends to absorb the bulk of incoming damage.
 			for (const t of game.tanks) {
 				if (t.isDead && t.isDead()) continue;
-				if (t.health >= t.maxHealth) continue;
+				const shieldMissing = (t.maxShield ?? 0) > 0 && (t.shield ?? 0) < t.maxShield;
+				const healthMissing = t.health < t.maxHealth;
+				if (!shieldMissing && !healthMissing) continue;
 				const dx = t.pos.x - this.pos.x;
 				const dy = t.pos.y - this.pos.y;
 				if (Math.sqrt(dx * dx + dy * dy) < t.size + this.size) {
-					t.health = Math.min(t.maxHealth, t.health + this.healAmount);
+					if (shieldMissing) t.shield = Math.min(t.maxShield, (t.shield ?? 0) + this.healAmount);
+					else t.health = Math.min(t.maxHealth, t.health + this.healAmount);
 					this.startDying();
 					return;
 				}
@@ -690,17 +721,26 @@ export class Tank {
 	// `claimCounts` is a Map<shape, number> of how many tanks already target each shape.
 	// Up to MAX_TANKS_PER_TARGET tanks may share one mob.
 	findNearest(claimCounts) {
-		let best = null;
-		let bestDistSq = Infinity;
+		// Mobs (Sentries / Sentry Sanctuaries) take priority over polygons. We
+		// pick the nearest mob if any are available; otherwise fall back to the
+		// nearest polygon. Lock-on / claim caps apply to both pools.
+		let bestMob = null, bestMobD = Infinity;
+		let bestShape = null, bestShapeD = Infinity;
 		for (const sh of game.shapes) {
 			if (sh.isDead() || !tankCanLockOn(sh)) continue;
-			if ((claimCounts.get(sh) ?? 0) >= MAX_TANKS_PER_TARGET) continue;
+			const isMob = sh.isSentry || sh.isSentrySpawner;
+			// Mobs allow unlimited concurrent attackers; polygons still respect the cap.
+			if (!isMob && (claimCounts.get(sh) ?? 0) >= MAX_TANKS_PER_TARGET) continue;
 			const dx = sh.pos.x - this.pos.x;
 			const dy = sh.pos.y - this.pos.y;
 			const d = dx * dx + dy * dy;
-			if (d < bestDistSq) { best = sh; bestDistSq = d; }
+			if (isMob) {
+				if (d < bestMobD) { bestMob = sh; bestMobD = d; }
+			} else if (d < bestShapeD) {
+				bestShape = sh; bestShapeD = d;
+			}
 		}
-		return best;
+		return bestMob || bestShape;
 	}
 	update() {
 		if (this.isDead()) {
@@ -777,7 +817,12 @@ export class Tank {
 				this.angle += Math.max(-MAX_TURN_PER_FRAME, Math.min(MAX_TURN_PER_FRAME, delta));
 				const dist = Math.sqrt(dx * dx + dy * dy);
 				const def = TANK_DEFS[this.defKey];
-				const keepout = target.isSentry ? 220 : (def.keepout ?? 30);
+				// Keep-out distance: for mobs, hover at ~50% of the tank's own weapon
+				// range so it shoots but doesn't body-rush. Drone tanks (Director)
+				// get 3× the basic-tank range. Non-mob targets use the tank's def
+				// keepout (defaults to 30).
+				const isMobTarget = !!(target.isSentry || target.isSentrySpawner);
+				const keepout = isMobTarget ? tankRange(this) * 0.5 - (target.size + this.size) : (def.keepout ?? 30);
 				const desired = Math.max(60, target.size + this.size + keepout);
 				const speed = tankSpeed(this);
 				if (dist > desired) {
@@ -807,6 +852,30 @@ export class Tank {
 		this.pos.add(edgeForce);
 		pushOutOfWalls(this.pos, this.size);
 		this.velocity.mulVal(0.92);
+		// Body damage from mobs: if a tank's body overlaps a Sentry or Sentry
+		// Sanctuary, both sides take symmetric OSA-style damage every frame the
+		// overlap persists. Tanks also get pushed out so they don't stick.
+		for (const sh of game.shapes) {
+			if (!(sh.isSentry || sh.isSentrySpawner)) continue;
+			if (sh.isDead && sh.isDead()) continue;
+			const dx = sh.pos.x - this.pos.x;
+			const dy = sh.pos.y - this.pos.y;
+			const dist = Math.max(0.001, Math.sqrt(dx * dx + dy * dy));
+			const combinedRadius = sh.size + this.size;
+			if (dist >= combinedRadius) continue;
+			// Treat mob as "bullet" / tank as "target": toTarget hits the tank, toBullet hits the mob.
+			const result = osaCollideDamage(sh, this, -dx, -dy, dist, combinedRadius);
+			// Route through takeDamage so the tank actually dies + shield is consumed.
+			if (result.toTarget > 0) this.takeDamage(result.toTarget);
+			sh.health -= result.toBullet;
+			sh.damageBlend = 1;
+			if (sh.health <= 0 && !sh.dying && sh.startDying) sh.startDying();
+			if (this.isDead()) return;
+			// Push the tank away so it can't park inside the mob.
+			const overlap = combinedRadius - dist;
+			this.pos.x -= (dx / dist) * overlap * 0.6;
+			this.pos.y -= (dy / dist) * overlap * 0.6;
+		}
 		// Push apart from other live tanks so they don't stack. Each side moves half
 		// the overlap; both tanks run this loop, giving full separation per frame.
 		for (const other of game.tanks) {

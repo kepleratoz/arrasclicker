@@ -10,20 +10,25 @@ export const TANK_DEFS = {
 	// OSA bullet-speed multipliers (gunvals.js → speed / maxSpeed):
 	//   basic = 1, twin uses basic, sniper = 1.5, machineGun maxSpeed = 0.8,
 	//   flankGuard maxSpeed = 0.85, pounder = 0.85.
+	// OSA Class.twin: combineStats([g.basic, g.twin]) — twin gunval has
+	// damage 0.7, shudder 0.9, spray 1.2, health 0.9 (recoil 0.5 is cosmetic).
+	// OSA Class.twin base + custom damage/health buffs (1.0 each).
 	twin: {
 		label: "Twin",
 		guns: [
-			{ length: 2.0, width: 0.8, x: 0, y: 0.55, angle: 0, shoot: { damage: 0.7, delay: 0 } },
-			{ length: 2.0, width: 0.8, x: 0, y: -0.55, angle: 0, shoot: { damage: 0.7, delay: 0.5 } },
+			{ length: 2.0, width: 0.8, x: 0, y: 0.55, angle: 0, shoot: { damage: 1.0, health: 1.0, shudder: 0.9, spray: 1.2, delay: 0 } },
+			{ length: 2.0, width: 0.8, x: 0, y: -0.55, angle: 0, shoot: { damage: 1.0, health: 1.0, shudder: 0.9, spray: 1.2, delay: 0.5 } },
 		],
 	},
+	// OSA Class.sniper base + custom damage 1.5 and health 1.0.
 	sniper: {
 		label: "Sniper",
-		guns: [{ length: 2.4, width: 0.8, x: 0, y: 0, angle: 0, shoot: { reload: 1.35, damage: 0.8, speed: 1.5, range: 1.5 } }],
+		guns: [{ length: 2.4, width: 0.8, x: 0, y: 0, angle: 0, shoot: { reload: 1.35, damage: 1.5, health: 1.0, speed: 1.5, shudder: 0.25, spray: 0.2 } }],
 	},
+	// OSA Class.machineGun base + custom damage 1.0 and health 1.0.
 	machineGun: {
 		label: "Machine Gun",
-		guns: [{ length: 1.2, width: 1.0, aspect: 1.4, x: 0.8, y: 0, angle: 0, shoot: { reload: 0.5, damage: 0.7, speed: 0.8, size: 0.92, health: 0.7, spray: 2.5, shudder: 1.7 } }],
+		guns: [{ length: 1.2, width: 1.0, aspect: 1.4, x: 0.8, y: 0, angle: 0, shoot: { reload: 0.5, damage: 1.0, speed: 0.8, size: 0.92, health: 1.0, spray: 2.5, shudder: 1.7 } }],
 	},
 	flankGuard: {
 		label: "Flank Guard",

@@ -656,27 +656,27 @@ export class Sentry extends Shape {
 	}
 }
 
-// ---------- Sentry Sanctuary ----------
+// ---------- Sentry Spawner ----------
 // A large pink triangle that periodically births a Sentry from a single barrel
 // (OSA Enchantress-style spawner). Tracks living children up to a cap so it
 // doesn't flood the field.
-const SS_SIZE = 80;
-const SS_HEALTH = 2500;
+const SS_SIZE = 140;                // 75% larger than the original 80.
+const SS_HEALTH = 1000;
 const SS_BODY_DAMAGE = 2;
 const SS_REGEN = 0.08;              // per frame (~5 HP/sec at 60fps).
-const SS_SPAWN_INTERVAL_MS = 8000;
+const SS_SPAWN_INTERVAL_MS = 16000; // all three barrels volley together every 16s.
 const SS_MAX_CHILDREN = 16;
 const SS_SPIN_RATE = 0.004;
 const SS_BARRELS = 3;               // one director-style barrel per triangle side.
-const SS_BARREL_LEN = 1.1;          // in body-radius units (distance from side midpoint outward).
-const SS_BARREL_INNER_W = 0.55;     // base width, in body-radius units.
-const SS_BARREL_OUTER_W = 0.95;     // flared tip — director style.
-const SS_BARREL_INSET = 0.18;       // how far the barrel base is recessed inside the body.
+const SS_BARREL_LEN = 0.22;         // in body-radius units — short Enchantress nub.
+const SS_BARREL_INNER_W = 0.75;     // base width, in body-radius units.
+const SS_BARREL_OUTER_W = 1.1;      // flared tip — director style.
+const SS_BARREL_INSET = 0.12;       // how far the barrel base is recessed inside the body.
 const SS_RECOIL_IMPULSE = 0.18;
 const SS_RECOIL_SPRING = 0.2;
 const SS_RECOIL_DAMP = 0.5;
 
-export class SentrySanctuary extends Shape {
+export class SentrySpawner extends Shape {
 	constructor(pos) {
 		super(pos);
 		this.size = SS_SIZE;
@@ -690,7 +690,7 @@ export class SentrySanctuary extends Shape {
 		this.rarity = -1;
 		this.layers = 1;
 		this.score = 0;
-		this.isSentrySanctuary = true;
+		this.isSentrySpawner = true;
 		this.damageType = 0;
 		this.damage = SS_BODY_DAMAGE;
 		this.penetration = 3;
@@ -700,6 +700,8 @@ export class SentrySanctuary extends Shape {
 		this.spawnTime = 0;
 		this.nextBarrelIdx = 0;
 		this.barrelStates = Array.from({ length: SS_BARRELS }, () => ({ position: 0, motion: 0 }));
+		this.velocity = new Vec2();
+		this.orbitDir = Math.random() < 0.5 ? 1 : -1;
 	}
 	startDying() {
 		if (this.dying) return;
@@ -719,26 +721,57 @@ export class SentrySanctuary extends Shape {
 		}
 		this.angle += SS_SPIN_RATE;
 		if (this.health < this.maxHealth) this.health = Math.min(this.maxHealth, this.health + SS_REGEN);
+		// Slow orbit around the nearest (non-neutral) sanctuary, mirroring Sentry's
+		// behaviour but at a wider radius and a slower base speed.
+		let home = null;
+		let homeDistSq = Infinity;
+		for (const sg of game.sieges) {
+			if (sg.neutral) continue;
+			const dx = sg.pos.x - this.pos.x;
+			const dy = sg.pos.y - this.pos.y;
+			const d = dx * dx + dy * dy;
+			if (d < homeDistSq) { homeDistSq = d; home = sg; }
+		}
+		if (home) {
+			const SS_ORBIT_RADIUS = 520;
+			const SS_MOVE_SPEED = 0.25;
+			const SS_RADIAL_CORRECTION = 0.03;
+			const dx = this.pos.x - home.pos.x;
+			const dy = this.pos.y - home.pos.y;
+			const dist = Math.max(0.001, Math.sqrt(dx * dx + dy * dy));
+			const radialError = dist - SS_ORBIT_RADIUS;
+			const radX = -dx / dist;
+			const radY = -dy / dist;
+			const tanX = -dy / dist * this.orbitDir;
+			const tanY = dx / dist * this.orbitDir;
+			this.velocity.x = tanX * SS_MOVE_SPEED + radX * radialError * SS_RADIAL_CORRECTION;
+			this.velocity.y = tanY * SS_MOVE_SPEED + radY * radialError * SS_RADIAL_CORRECTION;
+			this.pos.add(this.velocity);
+			pushOutOfWalls(this.pos, this.size);
+		}
 		this.damageBlend *= 0.85;
 		if (this.damageBlend < 0.01) this.damageBlend = 0;
 		this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
-		// Drop any children that died this frame.
-		this.children = this.children.filter((c) => c && !(c.isFullyDead && c.isFullyDead()));
+		// Drop any children that died this frame OR got removed from the world
+		// directly (e.g. via the "Clear Mobs" debug action) — otherwise the
+		// spawner gets jammed thinking it's still at max children.
+		this.children = this.children.filter((c) => c && !(c.isFullyDead && c.isFullyDead()) && game.shapes.includes(c));
 		const now = performance.now();
-		if (this.children.length < SS_MAX_CHILDREN && now > this.spawnTime) {
-			// Cycle through the 3 side-mounted barrels so the spawner feels alive.
-			const i = this.nextBarrelIdx;
-			const dir = this.angle + Math.PI / 3 + i * (Math.PI * 2 / 3);
+		if (now > this.spawnTime) {
+			// Volley: every barrel that still has capacity fires simultaneously.
 			const tipR = this.size * 0.5 + SS_BARREL_LEN * this.size;
-			const tipX = this.pos.x + Math.cos(dir) * tipR;
-			const tipY = this.pos.y + Math.sin(dir) * tipR;
-			const child = new Sentry(new Vec2(tipX, tipY));
-			child.velocity = Vec2.circle(dir, 3);
-			this.children.push(child);
-			game.shapes.push(child);
+			for (let i = 0; i < SS_BARRELS; i++) {
+				if (this.children.length >= SS_MAX_CHILDREN) break;
+				const dir = this.angle + Math.PI / 3 + i * (Math.PI * 2 / 3);
+				const tipX = this.pos.x + Math.cos(dir) * tipR;
+				const tipY = this.pos.y + Math.sin(dir) * tipR;
+				const child = new Sentry(new Vec2(tipX, tipY));
+				child.velocity = Vec2.circle(dir, 3);
+				this.children.push(child);
+				game.shapes.push(child);
+				this.barrelStates[i].motion += SS_RECOIL_IMPULSE;
+			}
 			this.spawnTime = now + SS_SPAWN_INTERVAL_MS;
-			this.barrelStates[i].motion += SS_RECOIL_IMPULSE;
-			this.nextBarrelIdx = (i + 1) % SS_BARRELS;
 		}
 		// Recoil spring per barrel.
 		for (const gs of this.barrelStates) {

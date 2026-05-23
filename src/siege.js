@@ -54,7 +54,7 @@ const SIEGE_TRAP_SHOOT = {
 	// chips, and resistDiff with a 0.88-resist Sentry destroys it. Setting penetration: 3
 	// keeps trap damage flat through its lifespan; resist is now inherited from the
 	// sanctuary's own 0.879 so trades against Sentries are roughly even.
-	penetration: 3,
+	penetration: 4.5,            // +50% over the prior 3.0 — chips through Sentry/SS resist faster.
 	// Sanctuary traps are a defensive shell — they shouldn't touch polygons.
 	ignoreFood: true,
 };
@@ -81,12 +81,12 @@ const HEALER_BODY_W = 0.8;                   // matches a Basic barrel's width.
 const HEALER_NOSE_W = HEALER_BODY_W / HEALER_NOSE_ASPECT;
 const HEALER_TOTAL_LEN = HEALER_BODY_LEN + HEALER_NOSE_LEN;
 const HEALER_SPIN_RATE = 0.005;
-const HEALER_SHOOT_INTERVAL = 1000;          // ms; all three barrels fire together.
+const HEALER_SHOOT_INTERVAL = 333;            // ms; 3× the prior fire rate (was 1000).
 const HEALER_BULLET_RADIUS = (HEALER_SIZE * HEALER_NOSE_W * HEALER_NOSE_ASPECT) / 2;
 const HEALER_BULLET_CFG = {
 	...TURRET_SHOOT_CFG,
 	isHeal: true,
-	healAmount: 4,            // HP restored per impact on an injured tank.
+	healAmount: 2,            // HP restored per impact (halved from prior 4 to balance triple fire rate).
 	damage: 0,                // no damage to anything.
 	size: 1.7,
 	// Traps quickly slow to a near-stop and only reach ~130 world units total. A non-trap
@@ -214,6 +214,16 @@ export class Siege {
 		if (this.neutral) return;   // neutral sanctuary is invulnerable.
 		this.health = Math.max(0, this.health - n);
 		this.damageBlend = 1;
+		// Fallen sanctuaries don't despawn — they collapse into a neutral husk
+		// that the player can find on the map and pay to repair.
+		if (this.health <= 0) {
+			this.neutral = true;
+			this.trapCount = 0;
+			this.healerCount = 0;
+			this.health = this.maxHealth;
+			this.bullets.length = 0;
+			this.damageBlend = 0;
+		}
 	}
 	render(ctx) {
 		const sc = game.scale * game.room.fov;

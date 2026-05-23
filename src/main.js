@@ -731,10 +731,14 @@ function frame(now) {
 		} else if (!allowNeutral && neutralIdx >= 0) {
 			game.sieges.splice(neutralIdx, 1);
 		}
+		// Sentry Spawner suppression: while one is alive, polygon spawns are
+		// throttled to 5% of the normal rate (20× longer cooldown between spawns).
+		const sentrySpawnerAlive = game.shapes.some((s) => s.isSentrySpawner && !(s.isFullyDead && s.isFullyDead()));
+		const spawnRateMul = sentrySpawnerAlive ? 20 : 1;
 		while (state.shapeSpawningEnabled && game.shapes.length < state.shapesCap && now > nextSpawnTime) {
 			game.shapes.push(Shape.random());
 			if (game.shapes.length === state.shapesCap) nextSpawnTime = now;
-			nextSpawnTime += (0.5 + Math.random() * 0.5) * Math.max(500, state.shapesSpawnInterval);
+			nextSpawnTime += (0.5 + Math.random() * 0.5) * Math.max(500, state.shapesSpawnInterval) * spawnRateMul;
 		}
 		updateDebug();
 		handleTankClicks();

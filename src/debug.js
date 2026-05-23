@@ -2,7 +2,7 @@ import { state } from "./state.js";
 import { Button } from "./button.js";
 import { game } from "./game.js";
 import { mouse, keys } from "./input.js";
-import { Shape, Sentry, SentrySanctuary, makeShapeData, TYPE_NAMES } from "./shape.js";
+import { Shape, Sentry, SentrySpawner, makeShapeData, TYPE_NAMES } from "./shape.js";
 import { Siege } from "./siege.js";
 import { resetGame } from "./save.js";
 import { Vec2 } from "./utils.js";
@@ -83,12 +83,15 @@ const actions = [
 	{ label: "Clear All Polygons",
 		run: () => { for (let i = game.shapes.length - 1; i >= 0; --i) if (!game.shapes[i].isSentry) game.shapes.splice(i, 1); } },
 	{ label: "Clear Mobs",
-		run: () => { for (let i = game.shapes.length - 1; i >= 0; --i) if (game.shapes[i].isSentry) game.shapes.splice(i, 1); } },
-	{ label: "Spawn Sentry Sanctuary",
+		run: () => { for (let i = game.shapes.length - 1; i >= 0; --i) {
+			const s = game.shapes[i];
+			if (s.isSentry || s.isSentrySpawner) game.shapes.splice(i, 1);
+		} } },
+	{ label: "Spawn Sentry Spawner",
 		run: () => {
 			const cx = game.room.minX + game.room.maxX / 2;
 			const cy = game.room.minY + game.room.maxY / 2;
-			game.shapes.push(new SentrySanctuary(new Vec2(cx, cy)));
+			game.shapes.push(new SentrySpawner(new Vec2(cx, cy)));
 		} },
 	{ label: () => {
 			const real = game.sieges.find((s) => !s.neutral);
@@ -135,7 +138,7 @@ function handleSpawnMode() {
 		}
 	}
 	if (keys.justPressed.has("Digit8")) {
-		game.shapes.push(new SentrySanctuary(worldFromMouse()));
+		game.shapes.push(new SentrySpawner(worldFromMouse()));
 	}
 	if (keys.justPressed.has("Digit9")) {
 		game.shapes.push(new Sentry(worldFromMouse()));
@@ -341,7 +344,7 @@ export function renderDebugPanel(ctx) {
 
 	if (game.debugMode) {
 		const banner = game.debugMode === "spawn"
-			? "SPAWN MODE — press 1-5 to spawn shapes, 8 for Sentry Sanctuary, 9 for Sentry"
+			? "SPAWN MODE — press 1-5 to spawn shapes, 8 for Sentry Spawner, 9 for Sentry"
 			: game.debugMode === "upgrade"
 			? "UPGRADE MODE — click shape, press 1-5 (tier), ESC to cancel"
 			: game.debugMode === "damage"
