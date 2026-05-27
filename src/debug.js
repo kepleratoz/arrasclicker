@@ -275,6 +275,7 @@ function handleResetTankMode() {
 
 function applyEditionKey(sel, n) {
 	if (n === 7) { if (sel.makeGold) sel.makeGold(sel.type); return; }   // 7 = Gold.
+	if (n === 8) { if (sel.makeGem) sel.makeGem(); return; }              // 8 = Gem.
 	if (n > 6) return;
 	const rarity = n === 6 ? 4 : n - 2; // 1=common(-1), 2=shiny(0), 3=legendary(1), 4=shadow(2), 5=ultra(3), 6=ethereal(4)
 	sel.setType(makeShapeData(sel.type, rarity, sel.layers));
@@ -353,7 +354,7 @@ export function renderDebugPanel(ctx) {
 			? "RESET TANK MODE — click a tank to wipe its upgrades, ESC to cancel"
 			: game.debugMode === "mapEditor"
 			? "MAP EDITOR — 1=full wall, 2=half wall, 3=erase (hold), 4=export, ESC to cancel"
-			: "EDITION MODE — click shape, press 1-6 (rarity, 6=Ethereal), 7=Gold, ESC to cancel";
+			: "EDITION MODE — click shape, press 1-6 (rarity, 6=Ethereal), 7=Gold, 8=Gem, ESC to cancel";
 		drawText(ctx, banner, game.width / 2, 60 * s, false, true, true, 22 * s);
 		if ((game.debugMode === "upgrade" || game.debugMode === "edition") && game.debugSelectedShape && !game.debugSelectedShape.isDead()) {
 			const sh = game.debugSelectedShape;

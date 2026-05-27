@@ -103,6 +103,7 @@ export class Shape {
 		this.damageType = 1;     // OSA "food" tag: tank bullets with buffVsFood get ×3 damage.
 		this.damageBlend = 0;    // OSA-style red-flash on damage; decays per frame.
 		this.isGold = false;
+		this.isGem = false;      // Gem shapes are debug-spawned via Edition Mode (key 8).
 		this.spawnTime = 0;      // performance.now() at spawn; gold shapes decay after GOLD_DECAY_MS.
 		this._particleTimer = 0;
 		// Up to `state.poisonLevel` concurrent poison stacks. Each entry is
@@ -139,6 +140,13 @@ export class Shape {
 			shape.setEvoTime();
 		}
 		return shape;
+	}
+	// Convert this shape into a "gem": faceted multi-shade body, slightly
+	// translucent. Non-spawnable naturally — only the Edition Mode debug
+	// action triggers this. Stats stay the same; only the rendering changes.
+	makeGem() {
+		this.isGem = true;
+		this.isGold = false;
 	}
 	makeGold(type) {
 		// Build a common, single-layer shape of the gold type, then re-skin it and
@@ -314,6 +322,7 @@ export class Shape {
 		}
 		ctx.globalAlpha = fade * visibilityAlpha;
 		if (ctx.globalAlpha <= 0) { ctx.globalAlpha = 1; return; }
+		if (this.isGem) { this._renderGem(ctx, sizeMul, fade); ctx.globalAlpha = 1; return; }
 		// Pulsing translucent aura behind gold shapes — the OSA portal-ring effect.
 		// OSA portalAura: ALPHA 0.4, SIZE oscillates 32↔45 by 1.2/tick on a SIZE-25 portal
 		// (≈1.28×→1.8× the source radius, ≈1.4 Hz). Drawn first so the shape sits on top.
@@ -391,6 +400,64 @@ export class Shape {
 				alpha: 1,
 				text: "+" + formatNumber(gained),
 			});
+		}
+	}
+	// Render a gem version of this shape: each face (triangle from center to
+	// an edge) is shaded based on a notional light from above, the whole body
+	// is drawn translucent, and inner ridge lines from center → vertices give
+	// a faceted crystal look.
+	_renderGem(ctx, sizeMul, fade) {
+		const sides = Math.max(3, this.sides);
+		const sc = game.scale * game.room.fov;
+		const cx = this.pos.x * sc;
+		const cy = this.pos.y * sc;
+		const baseR = this.drawSize * sizeMul * sc;
+		const cosFactor = Math.cos(Math.PI / sides);
+		const base = this.fillStyle;
+		const stroke = this.strokeStyle;
+		for (let layer = 0; layer < this.layers; ++layer) {
+			const r = baseR * Math.pow(cosFactor, layer);
+			const layerAngle = this.angle + ((layer & 1) ? 0 : Math.PI / sides);
+			// Per-face triangles, brighter on top / darker on bottom.
+			for (let i = 0; i < sides; ++i) {
+				const a1 = layerAngle + (i / sides) * Math.PI * 2;
+				const a2 = layerAngle + ((i + 1) / sides) * Math.PI * 2;
+				const faceAngle = (a1 + a2) / 2;
+				const shade = Math.max(0.2, Math.min(1, 0.5 - 0.4 * Math.sin(faceAngle)));
+				ctx.globalAlpha = 0.7 * fade;
+				ctx.fillStyle = darken(base, shade);
+				ctx.beginPath();
+				ctx.moveTo(cx, cy);
+				ctx.lineTo(cx + Math.cos(a1) * r, cy + Math.sin(a1) * r);
+				ctx.lineTo(cx + Math.cos(a2) * r, cy + Math.sin(a2) * r);
+				ctx.closePath();
+				ctx.fill();
+			}
+			// Outer outline (thicker, darker).
+			ctx.globalAlpha = 0.9 * fade;
+			ctx.strokeStyle = stroke;
+			ctx.lineWidth = 3 * sc;
+			ctx.lineJoin = "round";
+			ctx.beginPath();
+			for (let i = 0; i < sides; ++i) {
+				const a = layerAngle + (i / sides) * Math.PI * 2;
+				const x = cx + Math.cos(a) * r;
+				const y = cy + Math.sin(a) * r;
+				if (i === 0) ctx.moveTo(x, y);
+				else ctx.lineTo(x, y);
+			}
+			ctx.closePath();
+			ctx.stroke();
+			// Faint inner ridge lines from center to each vertex — the facet edges.
+			ctx.globalAlpha = 0.35 * fade;
+			ctx.lineWidth = 1.5 * sc;
+			ctx.beginPath();
+			for (let i = 0; i < sides; ++i) {
+				const a = layerAngle + (i / sides) * Math.PI * 2;
+				ctx.moveTo(cx, cy);
+				ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+			}
+			ctx.stroke();
 		}
 	}
 	_fireLightning(damage) {

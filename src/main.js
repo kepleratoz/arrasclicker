@@ -1010,8 +1010,8 @@ function frame(now) {
 			const rarityLabel = hovered.rarity >= 0 ? rarityNames[hovered.rarity] + " " : "";
 			const yBase = game.height - 12 * s - lineH * 3;
 			const hpDisplay = " - " + Math.max(0, Math.floor(hovered.health)) + "/" + hovered.maxHealth;
-			const goldLabel = hovered.isGold ? "Golden " : "";
-			const typeName = hovered.isSentry ? "Sentry" : goldLabel + TYPE_NAMES[hovered.type];
+			const prefix = hovered.isGold ? "Golden " : hovered.isGem ? "Gem " : "";
+			const typeName = hovered.isSentry ? "Sentry" : prefix + TYPE_NAMES[hovered.type];
 			// Rarity-themed fill for the main hover line; stroke stays default.
 			drawText(game.ctx, rarityLabel + typeName + hpDisplay, x, yBase, false, true, false, 28 * s, rarityTextFill(hovered.rarity, hovered.isGold));
 			if (!hovered.isSentry) drawText(game.ctx, "Tier " + hovered.layers, x, yBase + lineH, false, true, false, 24 * s);
