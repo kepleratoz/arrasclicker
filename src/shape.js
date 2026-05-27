@@ -13,6 +13,7 @@ const GOLD_HEALTH_MUL = 5;         // gold shapes have 5× base health.
 // Eligible gold types — Egg always, the rest gated on being unlocked. Square (1) has no effect.
 function eligibleGoldTypes() {
 	const out = [0];
+	if (state.squaresUnlocked) out.push(1);
 	if (state.trianglesUnlocked) out.push(2);
 	if (state.pentagonsUnlocked) out.push(3);
 	if (state.hexagonsUnlocked) out.push(4);
@@ -58,6 +59,17 @@ export function makeShapeData(type, rarity, layers) {
 	};
 }
 
+// Public so the bullet/click death paths can also report kills (Sentry click in
+// this file calls it via the in-class startDying chain).
+export function recordGalleryKill(type, tier, rarity) {
+	if (!state.galleryKills) state.galleryKills = {};
+	const r = rarity ?? -1;
+	const k = state.galleryKills;
+	if (!k[type]) k[type] = {};
+	if (!k[type][tier]) k[type][tier] = {};
+	k[type][tier][r] = (k[type][tier][r] || 0) + 1;
+}
+
 export function randomShapeType(typeRoll, rarityRoll, layers) {
 	let type = Math.min(4, shapeTypeFromBuff(typeRoll) | 0) - 1;
 	if (type === 3 && state.pentagonsUnlocked && Math.random() < 1 / 6) type = 4;
@@ -93,12 +105,17 @@ export class Shape {
 		this.isGold = false;
 		this.spawnTime = 0;      // performance.now() at spawn; gold shapes decay after GOLD_DECAY_MS.
 		this._particleTimer = 0;
-		this.poisonEnd = 0;      // performance.now() time at which poison expires.
-		this.poisonDPS = 0;      // damage per second from poison (25% of original click damage).
+		// Up to `state.poisonLevel` concurrent poison stacks. Each entry is
+		// { endTime, dps } — the per-frame damage applied is the sum of all
+		// not-yet-expired entries' dps / 60.
+		this.poisons = [];
 	}
 	startDying() {
 		if (this.dying) return;
 		this.dying = state.shapeDeathAnimEnabled ? 1 : DEATH_FRAMES + 1;
+		// Tally the kill for the Gallery (skip gold shapes — they're a separate
+		// drop class. Sentries / Spawners override startDying entirely.).
+		if (!this.isGold) recordGalleryKill(this.type, this.layers, this.rarity);
 	}
 	static random() {
 		const shape = new Shape(
@@ -220,8 +237,14 @@ export class Shape {
 		this.damageBlend *= 0.85;
 		if (this.damageBlend < 0.01) this.damageBlend = 0;
 		this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
-		if (this.poisonEnd && performance.now() < this.poisonEnd && !this.dying) {
-			this._applyHit(this.poisonDPS / 60);
+		if (this.poisons && this.poisons.length > 0 && !this.dying) {
+			const now = performance.now();
+			let totalDps = 0;
+			for (let i = this.poisons.length - 1; i >= 0; --i) {
+				if (this.poisons[i].endTime <= now) this.poisons.splice(i, 1);
+				else totalDps += this.poisons[i].dps;
+			}
+			if (totalDps > 0) this._applyHit(totalDps / 60);
 		}
 		if ((mouse.leftClick || mouse.right) && !game.debugMode && !game.controlledTank) {
 			const screenScale = game.scale * game.room.fov;
@@ -241,8 +264,11 @@ export class Shape {
 				}
 					this._applyHit(baseDmg);
 					if (equipped === "poison" && !this.dying) {
-						this.poisonEnd = performance.now() + 10000;
-						this.poisonDPS = baseDmg * 0.25;
+						const maxStacks = state.poisonLevel || 1;
+						if (!this.poisons) this.poisons = [];
+						const newPoison = { endTime: performance.now() + 10000, dps: baseDmg * 0.25 };
+						if (this.poisons.length >= maxStacks) this.poisons.shift();   // bump oldest stack.
+						this.poisons.push(newPoison);
 					}
 					if (equipped === "lightning" && !game._lightningFiredThisFrame) {
 						game._lightningFiredThisFrame = true;
@@ -482,6 +508,8 @@ export class Sentry extends Shape {
 	}
 	startDying() {
 		if (this.dying) return;
+		// A killed sentry pays out 5% of the player's current score, capped at e18.
+		if (!this.neutral) this.score = Math.min(state.score * 0.05, 1e18);
 		this.dying = state.shapeDeathAnimEnabled ? 1 : DEATH_FRAMES + 1;
 	}
 	takeDamage(n) {
@@ -522,7 +550,17 @@ export class Sentry extends Shape {
 				// Sentries take 20% of click damage (they're not pure "click fodder" like shapes).
 				this.health -= (1 + (state.clickDamageUpgrades || 0)) * goldClickDamageMul() * 0.2;
 				this.damageBlend = 1;
-				if (this.health <= 0) this.startDying();
+				if (this.health <= 0) {
+					this.startDying();   // sets this.score based on current state.score.
+					const gained = Math.round(this.score * goldScoreMul() * goldClickScoreMul());
+					state.score += gained;
+					game.flyingText.push({
+						x: this.pos.x * sScale,
+						y: this.pos.y * sScale,
+						alpha: 1,
+						text: "+" + formatNumber(gained),
+					});
+				}
 			}
 		}
 		// Movement: orbit the nearest sanctuary at SENTRY_ORBIT_RADIUS, picked once per frame.
@@ -675,6 +713,36 @@ const SS_BARREL_INSET = 0.12;       // how far the barrel base is recessed insid
 const SS_RECOIL_IMPULSE = 0.18;
 const SS_RECOIL_SPRING = 0.2;
 const SS_RECOIL_DAMP = 0.5;
+// Auto-healer turret on top of the Sentry Spawner. Disabled for now; flip
+// SS_HEALER_ENABLED back to true to bring it back.
+const SS_HEALER_ENABLED = false;
+const SS_HEALER_SIZE = 0.22;            // turret body radius in spawner-radius units.
+const SS_HEALER_BARREL_LEN = 1.5;       // barrel length in turret-radius units.
+const SS_HEALER_BARREL_W = 0.7;         // barrel width in turret-radius units.
+const SS_HEALER_TURN_RATE = 0.12;
+const SS_HEALER_SHOOT_INTERVAL_MS = 700;
+const SS_HEALER_RANGE = 900;
+const SS_HEALER_HEAL = 5;
+const SS_HEALER_HAT_FILL = "#e4363b";
+const SS_HEALER_HAT_STROKE = "#7e3b3d";
+const SS_HEAL_BULLET_RADIUS = 9;
+const SS_HEAL_BULLET_CFG = {
+	sentryHeal: true,
+	healAmount: SS_HEALER_HEAL,
+	damage: 0,
+	health: 2,
+	speed: 1.0,
+	range: 0.7,
+	ignoreUpgradeDamage: true,
+	ignoreUpgradeHealth: true,
+	ignoreUpgradeSpeed: true,
+};
+// OSA healerHat polygon (same as siege.js); normalized to ±1.
+const SS_HEALER_HAT_SHAPE = [
+	[0.3, -0.3], [1, -0.3], [1, 0.3], [0.3, 0.3],
+	[0.3, 1], [-0.3, 1], [-0.3, 0.3], [-1, 0.3],
+	[-1, -0.3], [-0.3, -0.3], [-0.3, -1], [0.3, -1],
+];
 
 export class SentrySpawner extends Shape {
 	constructor(pos) {
@@ -702,9 +770,19 @@ export class SentrySpawner extends Shape {
 		this.barrelStates = Array.from({ length: SS_BARRELS }, () => ({ position: 0, motion: 0 }));
 		this.velocity = new Vec2();
 		this.orbitDir = Math.random() < 0.5 ? 1 : -1;
+		// Auto-healer: spins to face the nearest injured Sentry and shoots pink
+		// heal bullets. Idle aim follows the spawner's current movement vector.
+		this.healerTurret = {
+			angle: 0,
+			shootTime: 0,
+			gunState: { position: 0, motion: 0 },
+		};
+		this.bullets = [];
 	}
 	startDying() {
 		if (this.dying) return;
+		// A killed spawner pays out 100% of the player's current score, capped at e20.
+		this.score = Math.min(state.score, 1e20);
 		this.dying = state.shapeDeathAnimEnabled ? 1 : DEATH_FRAMES + 1;
 	}
 	takeDamage(n) {
@@ -780,6 +858,54 @@ export class SentrySpawner extends Shape {
 			if (gs.position < 0) { gs.position = 0; gs.motion = -gs.motion; }
 			if (gs.motion > 0) gs.motion *= SS_RECOIL_DAMP;
 		}
+
+		// Auto-healer turret: aim at the nearest injured sentry within range;
+		// otherwise track the spawner's motion vector. Fires heal pulses on a
+		// fixed interval whenever it has a target.
+		if (SS_HEALER_ENABLED) {
+		let healTarget = null;
+		let bestSq = SS_HEALER_RANGE * SS_HEALER_RANGE;
+		for (const sh of game.shapes) {
+			if (!sh.isSentry || (sh.isDead && sh.isDead())) continue;
+			if (sh.health >= sh.maxHealth) continue;
+			const dx = sh.pos.x - this.pos.x;
+			const dy = sh.pos.y - this.pos.y;
+			const d = dx * dx + dy * dy;
+			if (d < bestSq) { bestSq = d; healTarget = sh; }
+		}
+		let aimAngle = this.healerTurret.angle;
+		if (healTarget) {
+			aimAngle = Math.atan2(healTarget.pos.y - this.pos.y, healTarget.pos.x - this.pos.x);
+		} else if (Math.hypot(this.velocity.x, this.velocity.y) > 0.05) {
+			aimAngle = Math.atan2(this.velocity.y, this.velocity.x);
+		}
+		let dA = aimAngle - this.healerTurret.angle;
+		while (dA > Math.PI) dA -= Math.PI * 2;
+		while (dA < -Math.PI) dA += Math.PI * 2;
+		this.healerTurret.angle += Math.max(-SS_HEALER_TURN_RATE, Math.min(SS_HEALER_TURN_RATE, dA));
+		if (healTarget && now > this.healerTurret.shootTime) {
+			const turretR = SS_HEALER_SIZE * this.size;
+			const barrelLen = SS_HEALER_BARREL_LEN * turretR;
+			const tipX = this.pos.x + Math.cos(this.healerTurret.angle) * barrelLen;
+			const tipY = this.pos.y + Math.sin(this.healerTurret.angle) * barrelLen;
+			this.bullets.push(new Bullet(
+				new Vec2(tipX, tipY), this.healerTurret.angle,
+				this, SS_HEAL_BULLET_CFG,
+				SS_HEALER_BARREL_W * SS_HEALER_SIZE, 1, SS_HEAL_BULLET_RADIUS,
+			));
+			this.healerTurret.shootTime = now + SS_HEALER_SHOOT_INTERVAL_MS;
+			this.healerTurret.gunState.motion += SS_RECOIL_IMPULSE;
+		}
+		const hgs = this.healerTurret.gunState;
+		hgs.motion -= SS_RECOIL_SPRING * hgs.position;
+		hgs.position += hgs.motion;
+		if (hgs.position < 0) { hgs.position = 0; hgs.motion = -hgs.motion; }
+		if (hgs.motion > 0) hgs.motion *= SS_RECOIL_DAMP;
+		for (let i = this.bullets.length - 1; i >= 0; --i) {
+			this.bullets[i].update();
+			if (this.bullets[i].dead) this.bullets.splice(i, 1);
+		}
+		}   // end SS_HEALER_ENABLED
 	}
 	render(ctx) {
 		const sc = game.scale * game.room.fov;
@@ -837,6 +963,54 @@ export class SentrySpawner extends Shape {
 		ctx.closePath();
 		ctx.fill();
 		ctx.stroke();
+
+		if (SS_HEALER_ENABLED) {
+		// Heal-bullets render under the turret so the turret stays on top.
+		for (const b of this.bullets) b.render(ctx);
+
+		// Auto-healer turret on top of the spawner: barrel, body, red plus hat.
+		const turretR = SS_HEALER_SIZE * r;
+		const hBarrelLen = SS_HEALER_BARREL_LEN * turretR;
+		const hBarrelHalfW = (SS_HEALER_BARREL_W / 2) * turretR;
+		const hRecoil = this.healerTurret.gunState.position * turretR;
+		ctx.save();
+		ctx.translate(cx, cy);
+		ctx.rotate(this.healerTurret.angle);
+		ctx.fillStyle = "#b1b3bc";
+		ctx.strokeStyle = "#646568";
+		ctx.lineWidth = lw;
+		ctx.lineJoin = "round";
+		ctx.beginPath();
+		ctx.moveTo(-hRecoil, -hBarrelHalfW);
+		ctx.lineTo(hBarrelLen - hRecoil, -hBarrelHalfW);
+		ctx.lineTo(hBarrelLen - hRecoil, hBarrelHalfW);
+		ctx.lineTo(-hRecoil, hBarrelHalfW);
+		ctx.closePath();
+		ctx.fill();
+		ctx.stroke();
+		ctx.beginPath();
+		ctx.arc(0, 0, turretR, 0, Math.PI * 2);
+		ctx.fill();
+		ctx.stroke();
+		ctx.restore();
+		// Red plus hat rendered without rotation (the hat stays upright).
+		const hatR = turretR * 0.7;
+		ctx.fillStyle = SS_HEALER_HAT_FILL;
+		ctx.strokeStyle = SS_HEALER_HAT_STROKE;
+		ctx.lineWidth = lw;
+		ctx.lineJoin = "round";
+		ctx.beginPath();
+		for (let i = 0; i < SS_HEALER_HAT_SHAPE.length; i++) {
+			const px = cx + SS_HEALER_HAT_SHAPE[i][0] * hatR;
+			const py = cy + SS_HEALER_HAT_SHAPE[i][1] * hatR;
+			if (i === 0) ctx.moveTo(px, py);
+			else ctx.lineTo(px, py);
+		}
+		ctx.closePath();
+		ctx.fill();
+		ctx.stroke();
+		}   // end SS_HEALER_ENABLED
+
 		ctx.globalAlpha = 1;
 		if (!this.dying) drawHealthBar(ctx, cx, cy, r, this.health, this.maxHealth, game.scale);
 	}

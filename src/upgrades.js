@@ -3,6 +3,7 @@ import { Button, SliderButton, RAINBOW } from "./button.js";
 import { colors, formatNumber, darken } from "./utils.js";
 import { shapeTypeFromBuff, shapeRarityFromBuff } from "./shape.js";
 import { syncTanks } from "./tank.js";
+import { goldCostReductionMul } from "./goldEffects.js";
 
 const RARITY_TIER_NAMES = ["Normal", "Shiny", "Legendary", "Shadow", "Rainbow"];
 const RARITY_TIER_COLORS = ["#bbbbbb", colors.shiny, colors.legendary, colors.shadow, RAINBOW];
@@ -45,12 +46,47 @@ class ClickDamage {
 }
 const CLICK_ABILITIES = {
 	lightning: { label: "Lightning",   cost: 3e19, color: "#f3e96b", ownedFlag: "lightningOwned" },
-	poison:    { label: "Poison",      cost: 1e19, color: "#5cd970", ownedFlag: "poisonOwned"    },
 };
 const CLICK_DESCRIPTIONS = {
 	lightning: "Every 3rd click chains lightning to nearby shapes.",
-	poison:    "Clicked shapes take 25% click damage / sec for 10s.",
 };
+// Poison is a 4-level upgrade — each purchase grants one extra concurrent
+// poison stack per shape (level 1 = 1 stack, level 4 = 4 stacks).
+const POISON_COSTS = [1e19, 2e19, 4e19, 8e19];
+class PoisonUpgrade {
+	button = new Button(() => this.activate(), "#5cd970");
+	tall = true;
+	level() { return state.poisonLevel || 0; }
+	isMaxed() { return this.level() >= POISON_COSTS.length; }
+	isEquipped() { return state.equippedClickUpgrade === "poison"; }
+	nextCost() { return POISON_COSTS[this.level()] ?? Infinity; }
+	activate() {
+		if (!this.isMaxed()) {
+			const c = this.nextCost();
+			if (state.score < c) return;
+			state.score -= c;
+			state.poisonLevel = this.level() + 1;
+			state.poisonOwned = true;
+			if (state.poisonLevel === 1) state.equippedClickUpgrade = "poison";
+			return;
+		}
+		state.equippedClickUpgrade = this.isEquipped() ? null : "poison";
+	}
+	getLabel() {
+		const lvl = this.level();
+		const tag = lvl === 0 ? "" : this.isEquipped() ? " (EQUIPPED)" : " (owned)";
+		return "Poison (" + lvl + "/" + POISON_COSTS.length + ")" + tag;
+	}
+	getDescription() {
+		const stacks = Math.max(1, this.level());
+		return "Clicked shapes take 25% click damage / sec for 10s. Stacks up to " + stacks + "× per shape.";
+	}
+	getSecondary() {
+		if (this.isMaxed()) return this.isEquipped() ? "Click to unequip" : "Click to equip";
+		return formatNumber(this.nextCost()) + " score";
+	}
+	isDisabled() { return !this.isMaxed() && state.score < this.nextCost(); }
+}
 // Midas Touch is a 5-level upgrade — the initial purchase counts as the first
 // of the 5. The first three purchases (initial + the first two upgrades) all
 // cost the base 5e16; the 4th doubles it, the 5th triples it. Each level adds
@@ -125,7 +161,7 @@ class ClickAbility {
 }
 export const clickUpgrades = [
 	new ClickDamage(),
-	new ClickAbility("poison"),
+	new PoisonUpgrade(),
 	new ClickAbility("lightning"),
 	new MidasUpgrade(),
 ];
@@ -235,9 +271,12 @@ class UnlockTriangles {
 	requirement() { return shapeTypeFromBuff(state.shapeTypeBuff) > 3; }
 	cost() { return 1e7; }
 	getSecondary() {
-		return state.trianglesUnlocked
-			? "UNLOCKED"
-			: formatNumber(this.cost()) + " score. Get enough of chance to spawn the first triangle";
+		if (state.trianglesUnlocked) return "UNLOCKED";
+		const needed = Math.pow(5, 3) - 5;   // 120 — where the spawn bucket flips to triangle.
+		if (state.shapeTypeBuff < needed) {
+			return "Spawn chance: " + formatNumber(Math.floor(state.shapeTypeBuff)) + " / " + formatNumber(needed) + " needed";
+		}
+		return formatNumber(this.cost()) + " score";
 	}
 	isDisabled() { return state.trianglesUnlocked || !this.requirement() || state.score < this.cost(); }
 }
@@ -282,11 +321,15 @@ class UnlockLegendary {
 class UnlockPentagons {
 	button = new Button(() => { state.shapeTypeBuff *= 10; state.pentagonsUnlocked = true; }, colors.pentagon);
 	getLabel() { return "Unlock Pentagon Upgrades"; }
+	// Tied to the actual pentagon spawn threshold in randomShapeType (the type
+	// bucket starts at shapeTypeFromBuff(buff) > 4, i.e. buff > 620). Pentagons
+	// already start rolling naturally once the buff crosses that line — this
+	// button just opens the upgrade tab + grants a 10× spawn-rate boost.
 	requirement() { return shapeTypeFromBuff(state.shapeTypeBuff) > 4; }
 	getSecondary() {
-		return state.pentagonsUnlocked
-			? "UNLOCKED"
-			: "22 max shapes. Get enough of chance to spawn the first pentagon";
+		if (state.pentagonsUnlocked) return "UNLOCKED";
+		const needed = Math.pow(5, 4) - 5;   // 620 — where the spawn bucket flips to pentagon.
+		return "Spawn chance: " + formatNumber(Math.floor(state.shapeTypeBuff)) + " / " + formatNumber(needed) + " needed";
 	}
 	isDisabled() { return state.pentagonsUnlocked || !this.requirement(); }
 }
@@ -325,13 +368,15 @@ class PentagonBuff {
 class UnlockHexagons {
 	button = new Button(() => { state.hexagonsUnlocked = true; }, colors.hexagon);
 	getLabel() { return "Unlock Hexagon Upgrades"; }
-	requirement() { return state.pentagonsUnlocked; }
+	// Buff > 3120 is one spawn bucket past pentagons (shapeTypeFromBuff > 5).
+	// Pentagons must already be unlocked too, since the only way to push the
+	// buff that high is the pentagon-tab buffs / pentagon unlock boost.
+	requirement() { return state.pentagonsUnlocked && shapeTypeFromBuff(state.shapeTypeBuff) > 5; }
 	getSecondary() {
-		return state.hexagonsUnlocked
-			? "UNLOCKED"
-			: this.requirement()
-			? "Hexagons now spawn at 1/5 the pentagon rate"
-			: "Unlock pentagons first";
+		if (state.hexagonsUnlocked) return "UNLOCKED";
+		if (!state.pentagonsUnlocked) return "Unlock pentagons first";
+		const needed = Math.pow(5, 5) - 5;   // 3120 — one spawn bucket past pentagon.
+		return "Spawn chance: " + formatNumber(Math.floor(state.shapeTypeBuff)) + " / " + formatNumber(needed) + " needed";
 	}
 	isDisabled() { return state.hexagonsUnlocked || !this.requirement(); }
 }
@@ -450,3 +495,20 @@ export const pentagonUpgrades = [
 	new UnlockShadow(),
 	new UnlockHexagons(),
 ];
+
+// Apply Golden Square's cost-reduction multiplier to every upgrade's cost
+// methods at module-load time. cost() / nextCost() are the canonical sources
+// of truth for both display and the score-deduction inside each callback, so
+// wrapping them once here propagates the discount everywhere.
+function wrapCostMethods(upgrade) {
+	for (const k of ["cost", "nextCost"]) {
+		if (typeof upgrade[k] !== "function" || upgrade[k]._goldWrapped) continue;
+		const orig = upgrade[k];
+		const wrapped = function () { return orig.call(this) * goldCostReductionMul(); };
+		wrapped._goldWrapped = true;
+		upgrade[k] = wrapped;
+	}
+}
+for (const list of [eggUpgrades, clickUpgrades, generalUpgrades, squareUpgrades, triangleUpgrades, pentagonUpgrades, hexagonUpgrades, tankUpgrades]) {
+	for (const u of list) wrapCostMethods(u);
+}

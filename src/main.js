@@ -3,7 +3,7 @@ import { mouse, keys } from "./input.js";
 import { game } from "./game.js";
 import { Room } from "./room.js";
 import { Button } from "./button.js";
-import { Shape, TYPE_NAMES } from "./shape.js";
+import { Shape, TYPE_NAMES, makeShapeData } from "./shape.js";
 import { drawText } from "./render.js";
 import { tabs, generalTab } from "./tabs.js";
 import { encode, decode, saveToStorage, loadFromStorage, enableAutoSave, onBeforeSave } from "./save.js";
@@ -311,6 +311,10 @@ function handleTankUpgradeClicks() {
 game.init({ Room, tabs, generalTab });
 
 loadFromStorage();
+// Migration: poison was a single-purchase flag (poisonOwned). It's now a level
+// (1..4). Old saves get bumped to level 1 so they don't silently lose their
+// purchase.
+if (state.poisonOwned && !state.poisonLevel) state.poisonLevel = 1;
 syncTanks();
 ensureCrashZoneSeeded();   // seed walls + neutral sentry if loading directly into Map 1.
 // Sanctuary no longer auto-spawns; toggle it via the debug panel.
@@ -338,6 +342,24 @@ const bulletAnimButton = new Button(() => { state.bulletDeathAnimEnabled = !stat
 const damageBlendButton = new Button(() => { state.damageBlendEnabled = !state.damageBlendEnabled; }, "#e03e41");
 
 let nextSpawnTime = 0;
+let lastFrameTime = 0;
+
+// requestAnimationFrame pauses while the tab is hidden but performance.now()
+// keeps advancing. On resume the timers (shape spawn, sanctuary shoot, healer
+// turret, spawner) would otherwise "catch up" and spew accumulated activity
+// in a single frame. Detect long gaps and reset every time-based scheduler.
+function resyncTimersAfterPause(now) {
+	nextSpawnTime = now;
+	for (const sg of game.sieges) {
+		sg.shootTime = now;
+		if (sg.healerTurret) sg.healerTurret.shootTime = now;
+	}
+	for (const sh of game.shapes) {
+		if (typeof sh.shootTime === "number") sh.shootTime = now;
+		if (typeof sh.spawnTime === "number") sh.spawnTime = now;
+		if (sh.healerTurret && typeof sh.healerTurret.shootTime === "number") sh.healerTurret.shootTime = now;
+	}
+}
 
 // Two-tone button styling (matches Button.render): a solid top fill with a
 // darker bottom 40%, plus a thick #222 border. Used by the Map tab and by each
@@ -442,6 +464,219 @@ function pointInHex(px, py, cx, cy, r) {
 // Map tab — full-width button sitting above the upgrade tabs. Same height (50)
 // as the per-category tab buttons; wider so it spans from the left edge to the
 // right edge of the upgrade panel. Visible once Map 1 is unlocked.
+// Hover-info fill color keyed by rarity. Rainbow cycles hue with the same
+// formula as rainbow shapes; Shadow is semi-transparent black; the rest match
+// their canonical palette entries. Border stroke is unchanged (drawText uses
+// "#222" regardless).
+function rarityTextFill(rarity, isGold) {
+	if (isGold) return "#efc74b";   // gold-shape body color.
+	switch (rarity) {
+		case 0: return colors.shiny;
+		case 1: return colors.legendary;
+		case 2: return "rgba(20,20,20,0.55)";   // shadow — translucent black.
+		case 3: { const h = (Date.now() * 0.1) % 360; return `hsl(${h}, 80%, 60%)`; }
+		case 4: return "rgba(122,211,219,0.55)";   // ethereal — translucent legendary cyan.
+		default: return undefined;   // falls back to default white in drawText.
+	}
+}
+
+// Top-middle menu: three buttons (Settings / Achievements / Gallery). Settings
+// opens a dropdown of the FX toggles (Shape, Bullet, Damage). Achievements and
+// Gallery open empty placeholder panels for now.
+const TOP_MENU_BUTTONS = [
+	{ key: "settings",     label: "Settings",     color: "#3ca4cb" },
+	{ key: "achievements", label: "Achievements", color: "#efc74b" },
+	{ key: "gallery",      label: "Gallery",      color: "#8d6adf" },
+];
+function topMenuLayout() {
+	const s = game.scale;
+	const w = 170 * s;
+	const h = 50 * s;
+	const gap = 8 * s;
+	const totalW = w * TOP_MENU_BUTTONS.length + gap * (TOP_MENU_BUTTONS.length - 1);
+	const xStart = (game.width - totalW) / 2;
+	const y = 6 * s;
+	return { s, w, h, gap, xStart, y };
+}
+function renderTopMiddleMenu() {
+	const ctx = game.ctx;
+	const { s, w, h, gap, xStart, y } = topMenuLayout();
+	// Fullscreen panel first so the top buttons render on top and stay clickable.
+	if (game.openMenu) {
+		ctx.fillStyle = "rgba(20,20,28,0.92)";
+		ctx.fillRect(0, 0, game.width, game.height);
+	}
+	for (let i = 0; i < TOP_MENU_BUTTONS.length; i++) {
+		const b = TOP_MENU_BUTTONS[i];
+		const x = xStart + i * (w + gap);
+		const active = game.openMenu === b.key;
+		const hovered = mouse.x >= x && mouse.x <= x + w && mouse.y >= y && mouse.y <= y + h;
+		const pressed = (hovered && mouse.left) || active;
+		drawTwoToneRect(ctx, x, y, w, h, b.color, hovered, pressed, s);
+		drawText(ctx, b.label, x + w / 2, y + h / 2, false, true, true, 22 * s);
+		if (hovered && mouse.leftRelease) {
+			game.openMenu = active ? null : b.key;
+			game.gallerySelected = null;   // every open / switch starts at the top-level grid.
+			mouse.leftRelease = false;
+		}
+	}
+	renderOpenMenu();
+}
+function renderOpenMenu() {
+	if (!game.openMenu) return;
+	const ctx = game.ctx;
+	const s = game.scale;
+	// Title near the top, below the top buttons.
+	const titleText = { settings: "Settings", achievements: "Achievements", gallery: "Gallery" }[game.openMenu];
+	drawText(ctx, titleText, game.width / 2, 120 * s, false, true, true, 48 * s);
+
+	if (game.openMenu === "settings") {
+		// Three FX toggles, centered in a column under the title.
+		const w = 380 * s;
+		const h = 60 * s;
+		const gap = 18 * s;
+		const x = (game.width - w) / 2;
+		let y = 220 * s;
+		shapeAnimButton.render(ctx, x, y, w, h, "Shape FX: " + (state.shapeDeathAnimEnabled ? "ON" : "OFF"), false);
+		y += h + gap;
+		bulletAnimButton.render(ctx, x, y, w, h, "Bullet FX: " + (state.bulletDeathAnimEnabled ? "ON" : "OFF"), false);
+		y += h + gap;
+		damageBlendButton.render(ctx, x, y, w, h, "Damage FX: " + (state.damageBlendEnabled ? "ON" : "OFF"), false);
+	} else if (game.openMenu === "gallery") {
+		renderGallery();
+	} else {
+		// Achievements: empty placeholder.
+		drawText(ctx, "(empty for now)", game.width / 2, game.height / 2, false, true, true, 30 * s);
+	}
+	// ESC closes the menu.
+	if (keys.justPressed.has("Escape")) {
+		if (game.gallerySelected) game.gallerySelected = null;
+		else game.openMenu = null;
+	}
+}
+
+const RARITY_DISPLAY = { "-1": "Normal", 0: "Shiny", 1: "Legendary", 2: "Shadow", 3: "Rainbow", 4: "Ethereal" };
+
+// Draw a shape icon for the gallery: same nested-polygon technique as in-world
+// shapes (one stroked polygon per tier-layer, shrunk by cos(π/sides) each ring).
+// Rainbow rarity (3) gets the hue-cycling fill that matches the live render.
+function drawGalleryShape(ctx, cx, cy, r, type, tier, rarity) {
+	const data = makeShapeData(type, rarity ?? -1, tier);
+	const sides = data.sides;
+	let fill = data.color;
+	let stroke = darken(data.color);
+	if (rarity === 3) {
+		const hue = (Date.now() * 0.1) % 360;
+		fill = `hsl(${hue}, 80%, 60%)`;
+		stroke = `hsl(${hue}, 60%, 35%)`;
+	}
+	const baseSides = Math.max(3, sides);
+	const cosFactor = Math.cos(Math.PI / baseSides);
+	ctx.fillStyle = fill;
+	ctx.strokeStyle = stroke;
+	ctx.lineWidth = 3 * game.scale;
+	ctx.lineJoin = "round";
+	for (let i = 0; i < Math.max(1, tier); i++) {
+		const layerR = r * Math.pow(cosFactor, i);
+		const rot = (i & 1) ? 0 : Math.PI / baseSides;
+		ctx.beginPath();
+		if (sides === 0) {
+			ctx.arc(cx, cy, layerR, 0, Math.PI * 2);
+		} else {
+			for (let j = 0; j < sides; j++) {
+				const a = rot + (j / sides) * Math.PI * 2;
+				const px = cx + Math.cos(a) * layerR;
+				const py = cy + Math.sin(a) * layerR;
+				if (j === 0) ctx.moveTo(px, py);
+				else ctx.lineTo(px, py);
+			}
+			ctx.closePath();
+		}
+		ctx.fill();
+		ctx.stroke();
+	}
+}
+
+function renderGallery() {
+	const ctx = game.ctx;
+	const s = game.scale;
+	if (game.gallerySelected) { renderGalleryDetail(); return; }
+
+	const kills = state.galleryKills || {};
+	const types = Object.keys(kills).map(Number).sort((a, b) => a - b);
+	if (types.length === 0) {
+		drawText(ctx, "No shapes killed yet.", game.width / 2, game.height / 2, false, true, true, 28 * s);
+		return;
+	}
+	const startY = 200 * s;
+	const rowH = 130 * s;
+	const slotW = 110 * s;
+	const slotR = 36 * s;
+	const leftLabelW = 200 * s;
+	let y = startY;
+	for (const type of types) {
+		if (y > game.height - rowH) break;   // simple clipping; no scroll yet.
+		drawText(ctx, TYPE_NAMES[type], 80 * s, y + rowH / 2 - 14 * s, false, true, false, 28 * s);
+		const tiers = Object.keys(kills[type]).map(Number).sort((a, b) => a - b);
+		let x = 80 * s + leftLabelW;
+		for (const tier of tiers) {
+			const cx = x + slotW / 2;
+			const cy = y + rowH / 2 - 10 * s;
+			const hovered = mouse.x >= x && mouse.x <= x + slotW && mouse.y >= y && mouse.y <= y + rowH;
+			if (hovered) {
+				ctx.fillStyle = "rgba(255,255,255,0.12)";
+				ctx.fillRect(x, y, slotW, rowH);
+			}
+			drawGalleryShape(ctx, cx, cy, slotR, type, tier, -1);
+			drawText(ctx, "Tier " + tier, cx, y + rowH - 22 * s, false, true, true, 18 * s);
+			if (hovered && mouse.leftRelease) {
+				game.gallerySelected = { type, tier };
+				mouse.leftRelease = false;
+				return;
+			}
+			x += slotW;
+		}
+		y += rowH;
+	}
+}
+
+function renderGalleryDetail() {
+	const ctx = game.ctx;
+	const s = game.scale;
+	const sel = game.gallerySelected;
+	const { type, tier } = sel;
+	// Back button.
+	const bx = 60 * s, by = 180 * s, bw = 130 * s, bh = 50 * s;
+	const bHov = mouse.x >= bx && mouse.x <= bx + bw && mouse.y >= by && mouse.y <= by + bh;
+	drawTwoToneRect(ctx, bx, by, bw, bh, "#888888", bHov, bHov && mouse.left, s);
+	drawText(ctx, "← Back", bx + bw / 2, by + bh / 2, false, true, true, 22 * s);
+	if (bHov && mouse.leftRelease) {
+		game.gallerySelected = null;
+		mouse.leftRelease = false;
+		return;
+	}
+	drawText(ctx, TYPE_NAMES[type] + " — Tier " + tier, game.width / 2, 200 * s, false, true, true, 36 * s);
+	const rarities = Object.keys((state.galleryKills[type] || {})[tier] || {}).map(Number).sort((a, b) => a - b);
+	if (rarities.length === 0) {
+		drawText(ctx, "No rarity records for this combo.", game.width / 2, game.height / 2, false, true, true, 24 * s);
+		return;
+	}
+	const slotW = 180 * s;
+	const slotR = 56 * s;
+	const totalW = rarities.length * slotW;
+	let x = (game.width - totalW) / 2;
+	const y = 320 * s;
+	for (const rarity of rarities) {
+		const cx = x + slotW / 2;
+		const cy = y + 80 * s;
+		drawGalleryShape(ctx, cx, cy, slotR, type, tier, rarity);
+		const label = RARITY_DISPLAY[rarity] ?? "?";
+		drawText(ctx, label, cx, y + 170 * s, false, true, true, 22 * s);
+		drawText(ctx, "× " + state.galleryKills[type][tier][rarity], cx, y + 200 * s, false, true, true, 18 * s);
+		x += slotW;
+	}
+}
+
 // Click-to-repair: clicking a neutral sanctuary selects it and shows a "Repair
 // Sanctuary" button above it. Pressing the button pays e12 score and replaces
 // the neutral siege with a real tier-1 sanctuary at the same spot.
@@ -720,6 +955,8 @@ function renderMapOverlay() {
 }
 
 function frame(now) {
+	if (lastFrameTime > 0 && now - lastFrameTime > 500) resyncTimersAfterPause(now);
+	lastFrameTime = now;
 	const overlayOpen = !!game.mapOverlayOpen;
 	if (!overlayOpen) {
 		// Auto-spawn / despawn the Neutral Sanctuary. The gate lives in mapSwitch.js
@@ -752,15 +989,12 @@ function frame(now) {
 	const savedClick = mouse.leftClick;
 	const savedRelease = mouse.leftRelease;
 	const savedWheel = mouse.wheelDelta;
-	if (overlayOpen) { mouse.leftClick = false; mouse.leftRelease = false; mouse.wheelDelta = 0; }
+	if (overlayOpen || game.openMenu) { mouse.leftClick = false; mouse.leftRelease = false; mouse.wheelDelta = 0; }
 	game.render(drawText);
-	if (!overlayOpen) handleSanctuaryRepair();
+	if (!overlayOpen && !game.openMenu) handleSanctuaryRepair();
 	try {
 		saveButton.render(game.ctx, 6 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Save", false);
 		loadButton.render(game.ctx, 106 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Load", false);
-		shapeAnimButton.render(game.ctx, 206 * game.scale, 6 * game.scale, 160 * game.scale, 50 * game.scale, "Shape FX: " + (state.shapeDeathAnimEnabled ? "ON" : "OFF"), false);
-		bulletAnimButton.render(game.ctx, 366 * game.scale, 6 * game.scale, 160 * game.scale, 50 * game.scale, "Bullet FX: " + (state.bulletDeathAnimEnabled ? "ON" : "OFF"), false);
-		damageBlendButton.render(game.ctx, 526 * game.scale, 6 * game.scale, 160 * game.scale, 50 * game.scale, "Damage FX: " + (state.damageBlendEnabled ? "ON" : "OFF"), false);
 		renderDebugPanel(game.ctx);
 		renderMapTab();
 		renderTankUpgradePanel();
@@ -776,11 +1010,23 @@ function frame(now) {
 			const rarityLabel = hovered.rarity >= 0 ? rarityNames[hovered.rarity] + " " : "";
 			const yBase = game.height - 12 * s - lineH * 3;
 			const hpDisplay = " - " + Math.max(0, Math.floor(hovered.health)) + "/" + hovered.maxHealth;
-			const typeName = hovered.isSentry ? "Sentry" : TYPE_NAMES[hovered.type];
-			drawText(game.ctx, rarityLabel + typeName + hpDisplay, x, yBase, false, true, false, 28 * s);
+			const goldLabel = hovered.isGold ? "Golden " : "";
+			const typeName = hovered.isSentry ? "Sentry" : goldLabel + TYPE_NAMES[hovered.type];
+			// Rarity-themed fill for the main hover line; stroke stays default.
+			drawText(game.ctx, rarityLabel + typeName + hpDisplay, x, yBase, false, true, false, 28 * s, rarityTextFill(hovered.rarity, hovered.isGold));
 			if (!hovered.isSentry) drawText(game.ctx, "Tier " + hovered.layers, x, yBase + lineH, false, true, false, 24 * s);
 			drawText(game.ctx, formatNumber(hovered.score) + " score", x, yBase + lineH * 2, false, true, false, 24 * s);
 		}
+		// Top-middle menu renders LAST so its fullscreen panels sit on top of the
+		// map tab, save/load, debug panel, and everything else. When a menu is
+		// open we restore the real mouse state so the top buttons + the open
+		// panel's controls (settings toggles) stay interactive.
+		if (game.openMenu && !overlayOpen) {
+			mouse.leftClick = savedClick;
+			mouse.leftRelease = savedRelease;
+			mouse.wheelDelta = savedWheel;
+		}
+		renderTopMiddleMenu();
 	} catch (e) {
 		console.error(e);
 	}

@@ -3,7 +3,7 @@ import { Vec2, formatNumber, lerpColor, REGEN_PER_FRAME, osaCurve, osaApply } fr
 import { game } from "./game.js";
 import { mouse, keys } from "./input.js";
 import { drawPolygon, drawHealthBar, drawText } from "./render.js";
-import { goldTankDamageMul, goldTankReloadMul, goldScoreMul, grantGoldEffect } from "./goldEffects.js";
+import { goldTankDamageMul, goldTankReloadMul, goldScoreMul, goldCostReductionMul, grantGoldEffect } from "./goldEffects.js";
 import { TANK_DEFS } from "./tankDefs.js";
 
 const BODY_FILL = "#58b0d0";
@@ -42,7 +42,7 @@ export const TANK_UPGRADE_SPECS = [
 	{ key: "atk",         label: "Body Damage",     max: 10, baseCost: 1e12, growth: 2,  color: "#e7896d" },
 	{ key: "speed",       label: "Move Speed",      max: 10, baseCost: 1e14, growth: 2,  color: "#3ca4cb" },
 ];
-export function tankUpgradeCost(spec, level) { return spec.baseCost * Math.pow(spec.growth, level); }
+export function tankUpgradeCost(spec, level) { return spec.baseCost * Math.pow(spec.growth, level) * goldCostReductionMul(); }
 // Total skill points spent across every per-tank upgrade.
 export function tankSkillPointsSpent(tank) {
 	let n = 0;
@@ -251,6 +251,7 @@ export class Bullet {
 		this.health = (shootCfg.ignoreUpgradeHealth ? 5 : tankBulletHealth(tank)) * healthMul;
 		this.maxHealth = this.health;
 		this.isHeal = !!shootCfg.isHeal;
+		this.isSentryHeal = !!shootCfg.sentryHeal;
 		this.healAmount = shootCfg.healAmount ?? 0;
 		this.targetsTanks = !!shootCfg.targetsTanks;
 		this.ignoreFood = !!shootCfg.ignoreFood;   // pass through `damageType === 1` shapes (polygons).
@@ -425,6 +426,23 @@ export class Bullet {
 			}
 			return;
 		}
+		if (this.isSentryHeal) {
+			// Pink heal bullet for the Sentry Spawner. Restores HP on contact with
+			// any non-dying Sentry below max health, then expires. Doesn't damage
+			// anything; just falls through to standard flight otherwise.
+			for (const sh of game.shapes) {
+				if (!sh.isSentry || (sh.isDead && sh.isDead())) continue;
+				if (sh.health >= sh.maxHealth) continue;
+				const dx = sh.pos.x - this.pos.x;
+				const dy = sh.pos.y - this.pos.y;
+				if (Math.sqrt(dx * dx + dy * dy) < sh.size + this.size) {
+					sh.health = Math.min(sh.maxHealth, sh.health + this.healAmount);
+					this.startDying();
+					return;
+				}
+			}
+			return;
+		}
 		if (this.isHeal) {
 			// Heal bullets behave like normal bullets, except: on contact with a tank
 			// that has anything to top up (shield or health) they restore one or the
@@ -484,8 +502,9 @@ export class Bullet {
 		const fade = this.dying ? Math.max(0, 1 - this.dying / DEATH_FRAMES) : 1;
 		const sizeMul = 1 + 0.5 * (1 - fade);
 		ctx.globalAlpha = fade;
-		// Sentry-fired bullets render pink to match the triangle that shot them.
-		if (this.targetsTanks) {
+		// Sentry-fired bullets — and the Sentry Spawner's heal bullets — render
+		// pink to match the triangle that shot them.
+		if (this.targetsTanks || this.isSentryHeal) {
 			ctx.fillStyle = "#ef99c3";
 			ctx.strokeStyle = "#a55c83";
 		} else {

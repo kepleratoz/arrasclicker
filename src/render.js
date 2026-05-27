@@ -1,6 +1,6 @@
 import { game } from "./game.js";
 
-export function drawText(ctx, text, x, y, isWarning = false, stroke = true, centered = false, size = 24 * game.scale) {
+export function drawText(ctx, text, x, y, isWarning = false, stroke = true, centered = false, size = 24 * game.scale, fillColor) {
 	if (centered) {
 		ctx.textAlign = "center";
 		ctx.textBaseline = "middle";
@@ -9,7 +9,7 @@ export function drawText(ctx, text, x, y, isWarning = false, stroke = true, cent
 		ctx.textBaseline = "top";
 	}
 	ctx.font = size + "px Ubuntu";
-	ctx.fillStyle = isWarning ? "#e7896d" : "#fff";
+	ctx.fillStyle = fillColor || (isWarning ? "#e7896d" : "#fff");
 	ctx.strokeStyle = "#222";
 	ctx.lineWidth = size / 4;
 	if (stroke) ctx.strokeText(text, x, y);
