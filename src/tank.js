@@ -3,7 +3,7 @@ import { Vec2, formatNumber, lerpColor, REGEN_PER_FRAME, osaCurve, osaApply } fr
 import { game } from "./game.js";
 import { mouse, keys } from "./input.js";
 import { drawPolygon, drawHealthBar, drawText } from "./render.js";
-import { goldTankDamageMul, goldTankReloadMul, goldScoreMul, goldCostReductionMul, grantGoldEffect } from "./goldEffects.js";
+import { goldTankDamageMul, goldTankReloadMul, goldScoreMul, goldCostReductionMul, grantGoldEffect, gemEffectDurationMs } from "./goldEffects.js";
 import { TANK_DEFS } from "./tankDefs.js";
 
 const BODY_FILL = "#58b0d0";
@@ -485,6 +485,7 @@ export class Bullet {
 			if (result.toTarget > 0) { shape.damageBlend = 1; shape.touchedByTank = true; }
 			if (shape.health <= 0 && !shape.dying) {
 				if (shape.isGold) grantGoldEffect(shape.type);
+				else if (shape.isGem) grantGoldEffect(shape.type, gemEffectDurationMs());
 				shape.startDying();
 				const gained = Math.round(shape.score * goldScoreMul());
 				state.score += gained;

@@ -8,6 +8,12 @@ function goldDurationMs() {
 	return GOLD_BASE_DURATION_MS + (state.goldEffectExtensionUpgrades || 0) * 20000;
 }
 
+// Gem-killed gold-effect duration: random 5..30 minutes. Temporary value — the
+// gem reward is expected to be reworked.
+export function gemEffectDurationMs() {
+	return (5 + Math.random() * 25) * 60 * 1000;
+}
+
 function addGoldEffect(key, label, mul, overrideMs) {
 	const now = performance.now();
 	if (!game.goldEffects) game.goldEffects = [];
@@ -16,15 +22,19 @@ function addGoldEffect(key, label, mul, overrideMs) {
 }
 
 // Grant the effect(s) tied to a destroyed gold shape's type index.
-// 0 Egg, 1 Square, 2 Triangle, 3 Pentagon, 4 Hexagon.
-export function grantGoldEffect(type) {
+// 0 Egg, 1 Square, 2 Triangle, 3 Pentagon, 4 Hexagon. `overrideMs` (used by gem
+// drops) replaces the default duration for every effect this type grants.
+export function grantGoldEffect(type, overrideMs) {
+	const d = overrideMs;
 	switch (type) {
-		case 0: addGoldEffect("score", "Score", 4); break;
-		// Golden Square: 30s flat cost-reduction (NOT affected by the gold-duration upgrade).
-		case 1: addGoldEffect("costReduction", "Cost Reduction", 0.5, 30000); break;
-		case 2: addGoldEffect("clickDamage", "Click Damage", 7); addGoldEffect("clickScore", "Click Score", 7); break;
-		case 3: addGoldEffect("tankDamage", "Tank Damage", 2); addGoldEffect("tankReload", "Tank Reload", 1.5); break;
-		case 4: addGoldEffect("rareChance", "Rare Chance", 6); break;
+		case 0: addGoldEffect("score", "Score", 4, d); break;
+		// Golden Square: 30s flat cost-reduction (NOT affected by the gold-duration upgrade) unless overridden.
+		// Gem Square keeps the −50% cost reduction but uses half the gem
+		// duration (cost reduction is potent, so cap its uptime).
+		case 1: addGoldEffect("costReduction", "Cost Reduction", 0.5, d != null ? d / 2 : 30000); break;
+		case 2: addGoldEffect("clickDamage", "Click Damage", 7, d); addGoldEffect("clickScore", "Click Score", 7, d); break;
+		case 3: addGoldEffect("tankDamage", "Tank Damage", 2, d); addGoldEffect("tankReload", "Tank Reload", 1.5, d); break;
+		case 4: addGoldEffect("rareChance", "Rare Chance", 6, d); break;
 	}
 }
 

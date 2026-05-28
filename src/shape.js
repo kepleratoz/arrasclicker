@@ -4,7 +4,7 @@ import { mouse } from "./input.js";
 import { drawPolygon, drawHealthBar } from "./render.js";
 import { game } from "./game.js";
 import { Bullet, tankCanTarget, pushOutOfWalls } from "./tank.js";
-import { grantGoldEffect, goldRareChanceMul, goldClickDamageMul, goldClickScoreMul, goldScoreMul } from "./goldEffects.js";
+import { grantGoldEffect, gemEffectDurationMs, goldRareChanceMul, goldClickDamageMul, goldClickScoreMul, goldScoreMul } from "./goldEffects.js";
 
 // Gold-shape constants.
 const GOLD_CHANCE = 1 / 700;       // fixed: 1 in 700 spawned shapes is gold.
@@ -168,7 +168,17 @@ export class Shape {
 		shape.layers = 1;
 		if (Math.random() < GOLD_CHANCE) {
 			const types = eligibleGoldTypes();
-			shape.makeGold(types[Math.floor(Math.random() * types.length)]);
+			const type = types[Math.floor(Math.random() * types.length)];
+			// 1 in 500 gold spawns gets upgraded to a gem of the same type. Gems
+			// grant the corresponding gold effect on death for a random 5–30
+			// minute window (temporary — to be reworked later).
+			if (Math.random() < 1 / 500) {
+				shape.setType(makeShapeData(type, -1, shape.layers));
+				shape.setEvoTime();
+				shape.makeGem();
+			} else {
+				shape.makeGold(type);
+			}
 		} else {
 			shape.setType(
 				randomShapeType(
@@ -556,6 +566,7 @@ export class Shape {
 		}
 		if (this.health <= 0) {
 			if (this.isGold) grantGoldEffect(this.type);
+			else if (this.isGem) grantGoldEffect(this.type, gemEffectDurationMs());
 			this.startDying();
 			const gained = Math.round(this.score * goldScoreMul() * goldClickScoreMul());
 			state.score += gained;
