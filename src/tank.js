@@ -71,6 +71,7 @@ function tankSkill(tank, key) { return osaCurve(up(tank, key), TANK_SKILL_CAPS[k
 function tankShootInterval(tank) { return BASE_SHOOT_INTERVAL * Math.pow(0.5, tankSkill(tank, "reload")) * goldTankReloadMul(); }
 export function tankCanTarget(shape) {
 	if (shape.isGold) return false;
+	if (shape.isGem) return false;     // gems are debug-spawned curiosities, not valid targets.
 	if (shape.neutral) return false;   // neutral sentries / sanctuaries are landmarks, never targeted.
 	// Two independent gates:
 	//   • Rarity cap (`state.tankRarityCap`): blocks high-rarity shapes the player wants
@@ -478,7 +479,7 @@ export class Bullet {
 			const result = osaCollideDamage(this, shape, dx, dy, dist, combinedRadius);
 			shape.health -= result.toTarget;
 			this.health -= result.toBullet;
-			if (result.toTarget > 0) shape.damageBlend = 1;
+			if (result.toTarget > 0) { shape.damageBlend = 1; shape.touchedByTank = true; }
 			if (shape.health <= 0 && !shape.dying) {
 				if (shape.isGold) grantGoldEffect(shape.type);
 				shape.startDying();
@@ -591,6 +592,7 @@ export class Tank {
 	}
 	isDead() { return this.respawnAt !== null; }
 	die() {
+		state.statTankDeaths++;
 		const now = performance.now();
 		this.deathPos = new Vec2(this.pos.x, this.pos.y);
 		// Pick a death-target angle that's a noticeable turn (90°–270°) from the current heading.

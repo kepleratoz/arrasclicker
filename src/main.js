@@ -464,6 +464,48 @@ function pointInHex(px, py, cx, cy, r) {
 // Map tab — full-width button sitting above the upgrade tabs. Same height (50)
 // as the per-category tab buttons; wider so it spans from the left edge to the
 // right edge of the upgrade panel. Visible once Map 1 is unlocked.
+// Render the Settings panel's stats list. Two columns of category groups so it
+// fits below the toggle buttons. Each group: heading + key/value lines.
+function renderSettingsStats(ctx, s, yStart) {
+	const unlockedAreas = 1 + (state.map1Unlocked ? 1 : 0);
+	const shapeRoll = Math.floor(state.shapeTypeBuff || 1);
+	const fmt = (n) => formatNumber(typeof n === "number" ? n : 0);
+	const groups = [
+		{ title: "Clicking", rows: [
+			["Shape clicks",          fmt(state.statShapeClicks)],
+			["Misses",                fmt(state.statClickMisses)],
+			["Damage by clicking",    fmt(state.statClickDamageDealt)],
+		] },
+		{ title: "Kills", rows: [
+			["Total shape kills",     fmt(state.statShapeKillsTotal)],
+			["Click contributed",     fmt(state.statShapeKillsClick)],
+			["Tank contributed",      fmt(state.statShapeKillsTank)],
+			["Rare shapes killed",    fmt(state.statRareKills)],
+			["Gold shapes killed",    fmt(state.statGoldKills)],
+		] },
+		{ title: "Progress", rows: [
+			["Unlocked areas",        unlockedAreas + " / 2"],
+			["Upgrades bought",       fmt(state.statUpgradesBought)],
+			["Shape roll chance",     fmt(shapeRoll)],
+			["Tank deaths",           fmt(state.statTankDeaths)],
+		] },
+	];
+	const colW = 320 * s;
+	const colGap = 30 * s;
+	const totalW = colW * 3 + colGap * 2;
+	let x0 = Math.max(40 * s, (game.width - totalW) / 2);
+	for (const g of groups) {
+		let y = yStart;
+		drawText(ctx, "— " + g.title + " —", x0 + colW / 2, y, false, true, true, 22 * s);
+		y += 34 * s;
+		for (const [label, value] of g.rows) {
+			drawText(ctx, label + ": " + value, x0, y, false, true, false, 18 * s);
+			y += 26 * s;
+		}
+		x0 += colW + colGap;
+	}
+}
+
 // Hover-info fill color keyed by rarity. Rainbow cycles hue with the same
 // formula as rainbow shapes; Shadow is semi-transparent black; the rest match
 // their canonical palette entries. Border stroke is unchanged (drawText uses
@@ -493,8 +535,9 @@ function topMenuLayout() {
 	const w = 170 * s;
 	const h = 50 * s;
 	const gap = 8 * s;
-	const totalW = w * TOP_MENU_BUTTONS.length + gap * (TOP_MENU_BUTTONS.length - 1);
-	const xStart = (game.width - totalW) / 2;
+	// Sit immediately to the right of the Save (x=6..106) and Load (x=106..206)
+	// buttons in the top bar.
+	const xStart = 206 * s + gap;
 	const y = 6 * s;
 	return { s, w, h, gap, xStart, y };
 }
@@ -542,6 +585,8 @@ function renderOpenMenu() {
 		bulletAnimButton.render(ctx, x, y, w, h, "Bullet FX: " + (state.bulletDeathAnimEnabled ? "ON" : "OFF"), false);
 		y += h + gap;
 		damageBlendButton.render(ctx, x, y, w, h, "Damage FX: " + (state.damageBlendEnabled ? "ON" : "OFF"), false);
+		y += h + gap + 8 * s;
+		renderSettingsStats(ctx, s, y);
 	} else if (game.openMenu === "gallery") {
 		renderGallery();
 	} else {
@@ -958,6 +1003,9 @@ function frame(now) {
 	if (lastFrameTime > 0 && now - lastFrameTime > 500) resyncTimersAfterPause(now);
 	lastFrameTime = now;
 	const overlayOpen = !!game.mapOverlayOpen;
+	// Capture the click state for stat tracking before any suppression kicks in.
+	const trackClickThisFrame = mouse.leftClick && !overlayOpen && !game.openMenu;
+	game._clickHitShape = false;
 	if (!overlayOpen) {
 		// Auto-spawn / despawn the Neutral Sanctuary. The gate lives in mapSwitch.js
 		// and is always-true on Crash Zone (so the user can find and repair it).
@@ -980,6 +1028,10 @@ function frame(now) {
 		updateDebug();
 		handleTankClicks();
 		game.update();
+	}
+	if (trackClickThisFrame) {
+		if (game._clickHitShape) state.statShapeClicks++;
+		else state.statClickMisses++;
 	}
 	// While the overlay is open, suppress mouse clicks so background buttons /
 	// tabs / upgrade rows don't fire when the user clicks a hexagon. Saved

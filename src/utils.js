@@ -61,13 +61,18 @@ export function osaApply(f, x) {
 }
 
 const darkenCache = new Map();
+const clamp255 = (n) => Math.max(0, Math.min(255, n));
 export function darken(hex, brightness = 0.6) {
 	const key = hex + brightness;
 	const cached = darkenCache.get(key);
 	if (cached) return cached;
-	const r = Math.round(parseInt(hex.slice(1, 3), 16) * brightness + 34 * (1 - brightness));
-	const g = Math.round(parseInt(hex.slice(3, 5), 16) * brightness + 34 * (1 - brightness));
-	const b = Math.round(parseInt(hex.slice(5, 7), 16) * brightness + 34 * (1 - brightness));
+	// Channels are clamped to 0..255 — brightness > 1 (used by gem shading)
+	// otherwise overflows past 255 → "#1aafff" becomes 3-hex digits → invalid
+	// color → ctx.fillStyle silently falls back to whatever was set previously
+	// (which is how the gem looked like it "stole" colors from nearby shapes).
+	const r = clamp255(Math.round(parseInt(hex.slice(1, 3), 16) * brightness + 34 * (1 - brightness)));
+	const g = clamp255(Math.round(parseInt(hex.slice(3, 5), 16) * brightness + 34 * (1 - brightness)));
+	const b = clamp255(Math.round(parseInt(hex.slice(5, 7), 16) * brightness + 34 * (1 - brightness)));
 	const alpha = hex.length > 7 ? hex.slice(7, 9) : "";
 	const result =
 		"#" +

@@ -51,6 +51,17 @@ export const state = {
 	// Gallery: a nested tally of shapes the player has killed, indexed by
 	// type (0..7) → tier (layers) → rarity (-1..4) → count.
 	galleryKills: {},
+	// Stats — global counters shown in the Settings panel.
+	statShapeClicks: 0,
+	statClickMisses: 0,
+	statClickDamageDealt: 0,
+	statShapeKillsTotal: 0,
+	statShapeKillsClick: 0,
+	statShapeKillsTank: 0,
+	statRareKills: 0,
+	statGoldKills: 0,
+	statTankDeaths: 0,
+	statUpgradesBought: 0,
 };
 
 // Fields that are unique to each map. Everything else (arenaFovUpgrades, shapesCap,

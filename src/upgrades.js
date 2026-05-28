@@ -88,10 +88,10 @@ class PoisonUpgrade {
 	isDisabled() { return !this.isMaxed() && state.score < this.nextCost(); }
 }
 // Midas Touch is a 5-level upgrade — the initial purchase counts as the first
-// of the 5. The first three purchases (initial + the first two upgrades) all
-// cost the base 5e16; the 4th doubles it, the 5th triples it. Each level adds
-// +0.1% per-click chance to replace the clicked shape with a random gold shape.
-const MIDAS_COSTS = [5e16, 5e16, 5e16, 1e17, 1.5e17];
+// of the 5. Each level doubles the previous level's cost (1e19, 2e19, 4e19,
+// 8e19, 16e19). Each level adds +0.1% per-click chance to replace the clicked
+// shape with a random gold shape.
+const MIDAS_COSTS = [1e19, 2e19, 4e19, 8e19, 16e19];
 class MidasUpgrade {
 	button = new Button(() => this.activate(), "#d4af37");
 	tall = true;   // upgrade panel renders this slot taller with a separate description row.
@@ -509,6 +509,22 @@ function wrapCostMethods(upgrade) {
 		upgrade[k] = wrapped;
 	}
 }
+// Wrap upgrade callbacks so every actual purchase (score decreased) bumps the
+// global purchase counter. Toggle-only callbacks (e.g. equipping a click
+// ability after it's owned) don't decrease score, so they're correctly skipped.
+function wrapPurchaseCounter(upgrade) {
+	const btn = upgrade && upgrade.button;
+	if (!btn || typeof btn.callback !== "function" || btn.callback._statWrapped) return;
+	const orig = btn.callback;
+	const wrapped = function () {
+		const before = state.score;
+		const result = orig.apply(this, arguments);
+		if (state.score < before) state.statUpgradesBought = (state.statUpgradesBought || 0) + 1;
+		return result;
+	};
+	wrapped._statWrapped = true;
+	btn.callback = wrapped;
+}
 for (const list of [eggUpgrades, clickUpgrades, generalUpgrades, squareUpgrades, triangleUpgrades, pentagonUpgrades, hexagonUpgrades, tankUpgrades]) {
-	for (const u of list) wrapCostMethods(u);
+	for (const u of list) { wrapCostMethods(u); wrapPurchaseCounter(u); }
 }

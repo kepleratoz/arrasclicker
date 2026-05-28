@@ -49,6 +49,7 @@ class Game {
 		this.goldEffects = [];      // [{ key, label, expiry }] — temporary gold-shape buffs.
 		this.particles = [];        // [{ x, y, vx, vy, size, dying }] — gold-shape sparkle bits.
 		this.walls = [];            // [{ x, y, size }] — debug map-editor walls (session-only).
+		this.gemShards = [];        // short-lived shatter fragments spawned when a gem dies.
 		this.lightningBolts = [];   // [{ points: [{x,y}, ...], life }] — lightning visuals fading out.
 		// `room`, `tabs`, `currentTab` are wired up in init() after circular imports settle.
 		this.room = null;
@@ -130,6 +131,17 @@ class Game {
 			const dx = p.cx - p.x, dy = p.cy - p.y;
 			if (p.age > PARTICLE_FRAMES || dx * dx + dy * dy < 64) this.particles.splice(i, 1);
 		}
+		// Gem shatter fragments: drift outward with friction, spin, and expire.
+		for (let i = this.gemShards.length - 1; i >= 0; --i) {
+			const s = this.gemShards[i];
+			s.x += s.vx;
+			s.y += s.vy;
+			s.vx *= 0.93;
+			s.vy *= 0.93;
+			s.rot += s.rotSpeed;
+			s.life -= 1;
+			if (s.life <= 0) this.gemShards.splice(i, 1);
+		}
 	}
 
 	render(drawText) {
@@ -201,6 +213,34 @@ class Game {
 				ctx.arc(p.x * sc, p.y * sc, p.size * sc, 0, Math.PI * 2);
 				ctx.fill();
 				ctx.stroke();
+			}
+			ctx.globalAlpha = 1;
+		}
+
+		// Gem shatter shards: small polygons flying outward, fading as they die.
+		if (this.gemShards.length) {
+			const sc = this.scale * this.room.fov;
+			for (const s of this.gemShards) {
+				const alpha = Math.min(1, s.life / 20);
+				ctx.globalAlpha = alpha * 0.85;
+				ctx.fillStyle = s.color;
+				ctx.strokeStyle = s.stroke;
+				ctx.lineWidth = 2 * sc;
+				ctx.lineJoin = "round";
+				ctx.save();
+				ctx.translate(s.x * sc, s.y * sc);
+				ctx.rotate(s.rot);
+				const r = s.size * sc;
+				ctx.beginPath();
+				for (let i = 0; i < s.sides; i++) {
+					const a = (i / s.sides) * Math.PI * 2;
+					if (i === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+					else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+				}
+				ctx.closePath();
+				ctx.fill();
+				ctx.stroke();
+				ctx.restore();
 			}
 			ctx.globalAlpha = 1;
 		}

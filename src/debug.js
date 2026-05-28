@@ -163,7 +163,7 @@ function handleSelectMode(applyKey) {
 }
 
 function applyUpgradeKey(sel, n) {
-	if (n > 5) return;
+	if (n > 6) return;
 	while (sel.layers < n) sel.evolve();
 }
 
@@ -347,7 +347,7 @@ export function renderDebugPanel(ctx) {
 		const banner = game.debugMode === "spawn"
 			? "SPAWN MODE — press 1-5 to spawn shapes, 8 for Sentry Spawner, 9 for Sentry"
 			: game.debugMode === "upgrade"
-			? "UPGRADE MODE — click shape, press 1-5 (tier), ESC to cancel"
+			? "UPGRADE MODE — click shape, press 1-6 (tier), ESC to cancel"
 			: game.debugMode === "damage"
 			? "DAMAGE MODE — click any entity to deal 1 damage, ESC to cancel"
 			: game.debugMode === "resetTank"

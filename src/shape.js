@@ -110,6 +110,10 @@ export class Shape {
 		// { endTime, dps } — the per-frame damage applied is the sum of all
 		// not-yet-expired entries' dps / 60.
 		this.poisons = [];
+		// Stat tracking: set by the click/lightning/poison and tank-bullet
+		// damage paths. Read in startDying to attribute the kill.
+		this.touchedByClick = false;
+		this.touchedByTank = false;
 	}
 	startDying() {
 		if (this.dying) return;
@@ -117,6 +121,38 @@ export class Shape {
 		// Tally the kill for the Gallery (skip gold shapes — they're a separate
 		// drop class. Sentries / Spawners override startDying entirely.).
 		if (!this.isGold) recordGalleryKill(this.type, this.layers, this.rarity);
+		if (this.isGem) this._spawnGemShards();
+		// Attribute the kill to whatever damage source(s) actually hit the
+		// shape. Untouched startDying (e.g. gold-shape natural decay) doesn't
+		// count as a kill.
+		if (this.touchedByClick || this.touchedByTank) {
+			state.statShapeKillsTotal++;
+			if (this.touchedByClick) state.statShapeKillsClick++;
+			if (this.touchedByTank) state.statShapeKillsTank++;
+			if (this.rarity >= 0) state.statRareKills++;
+			if (this.isGold) state.statGoldKills++;
+		}
+	}
+	_spawnGemShards() {
+		const count = 8 + Math.floor(Math.random() * 5);   // 8..12 fragments.
+		const baseSides = this.sides === 0 ? 3 : Math.max(3, this.sides);
+		for (let i = 0; i < count; i++) {
+			const angle = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.6;
+			const speed = 1.6 + Math.random() * 2.4;
+			game.gemShards.push({
+				x: this.pos.x,
+				y: this.pos.y,
+				vx: Math.cos(angle) * speed,
+				vy: Math.sin(angle) * speed,
+				rot: Math.random() * Math.PI * 2,
+				rotSpeed: (Math.random() - 0.5) * 0.4,
+				size: this.size * (0.18 + Math.random() * 0.16),
+				color: this.fillStyle,
+				stroke: this.strokeStyle,
+				life: 30 + Math.floor(Math.random() * 20),
+				sides: baseSides,
+			});
+		}
 	}
 	static random() {
 		const shape = new Shape(
@@ -144,11 +180,39 @@ export class Shape {
 	// Convert this shape into a "gem": faceted multi-shade body, slightly
 	// translucent. Non-spawnable naturally — only the Edition Mode debug
 	// action triggers this. Stats stay the same; only the rendering changes.
+	// A handful of per-instance random properties make each gem look slightly
+	// different (rotated lighting, jittered facet count on egg gems, slightly
+	// shifted shade band).
 	makeGem() {
 		this.isGem = true;
 		this.isGold = false;
+		// Outline / silhouette stays identical to the standard shape — only the
+		// inside texture differs between gems. Per-instance randoms below just
+		// shift the shading (phase) and the alpha; vertex positions are NOT
+		// jittered any more.
+		this._gemPhase = Math.random() * Math.PI * 2;
+		if (this.type === 3) {
+			// Pentagons keep the deep-shadow look but with a wider swing for
+			// more visible facet variation.
+			this._gemContrast = 0.35 + Math.random() * 0.20;     // 0.35..0.55
+			this._gemMid = 0.55 + Math.random() * 0.15;          // 0.55..0.70
+		} else {
+			// Other gems: shading stays at-or-above base color but the
+			// brightness band is now wide enough that facets read as visibly
+			// different shades (e.g. some near-white, some at base color).
+			this._gemContrast = 0.22 + Math.random() * 0.18;     // 0.22..0.40
+			this._gemMid = 1.10 + Math.random() * 0.10;          // 1.10..1.20
+		}
+		this._gemAlpha = 0.70 + Math.random() * 0.06;
+		// Gem shapes have 250× their normal HP. Healing slowdown (÷3) and the
+		// evolution slowdown (×5) are handled inside the regen tick / setEvoTime.
+		this.maxHealth *= 250;
+		this.health *= 250;
+		this.setEvoTime();
 	}
 	makeGold(type) {
+		// Gem takes priority over Gold — a Gem shape can never become Gold.
+		if (this.isGem) return;
 		// Build a common, single-layer shape of the gold type, then re-skin it and
 		// give it 5× health. Gold shapes never evolve.
 		this.layers = 1;
@@ -200,9 +264,10 @@ export class Shape {
 		this.setEvoTime();
 	}
 	setEvoTime() {
+		const gemMul = this.isGem ? 5 : 1;   // gem shapes evolve 5× slower.
 		this.evoTime =
 			performance.now() +
-			(this.layers * (1 + this.type) * 1e4 * (0.5 + Math.random())) / state.shapeEvoNerf[this.type];
+			(gemMul * this.layers * (1 + this.type) * 1e4 * (0.5 + Math.random())) / state.shapeEvoNerf[this.type];
 	}
 	update() {
 		if (this.dying) {
@@ -241,7 +306,10 @@ export class Shape {
 			}
 		}
 		if (this.layers < state.layersCaps[this.type] && performance.now() > this.evoTime) this.evolve();
-		if (this.health < this.maxHealth) this.health = Math.min(this.maxHealth, this.health + REGEN_PER_FRAME);
+		if (this.health < this.maxHealth) {
+			const regen = this.isGem ? REGEN_PER_FRAME / 3 : REGEN_PER_FRAME;   // gems heal 3× slower.
+			this.health = Math.min(this.maxHealth, this.health + regen);
+		}
 		this.damageBlend *= 0.85;
 		if (this.damageBlend < 0.01) this.damageBlend = 0;
 		this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
@@ -271,6 +339,9 @@ export class Shape {
 					this.makeGold(types[Math.floor(Math.random() * types.length)]);
 				}
 					this._applyHit(baseDmg);
+					this.touchedByClick = true;
+					state.statClickDamageDealt += baseDmg;
+					game._clickHitShape = true;
 					if (equipped === "poison" && !this.dying) {
 						const maxStacks = state.poisonLevel || 1;
 						if (!this.poisons) this.poisons = [];
@@ -357,6 +428,31 @@ export class Shape {
 			ctx.strokeStyle = lerpColor(ctx.strokeStyle, "#7a1a1a", blend);
 		}
 		ctx.lineWidth = 3 * game.scale * game.room.fov;
+		// For tiered shapes, an inner ring's vertex sits exactly on an outer
+		// ring's edge, and the inner stroke's outward half-width would otherwise
+		// poke through the outer edge. Clip the layer rendering to a slightly
+		// enlarged outer polygon (margin = stroke half-width) so the outer
+		// stroke still shows in full but the inner strokes can't bleed out.
+		const tiered = this.layers > 1 && this.sides !== 0;
+		if (tiered) {
+			const sc = game.scale * game.room.fov;
+			// Vertex margin = strokeHalfWidth / cos(π/sides) gives a parallel
+			// offset polygon whose edges sit exactly stroke-half-width outside
+			// the original edges. Without this scaling, sharp-angle polygons
+			// (triangles especially) had their outer edge midpoints pinched
+			// inside the clip, making the outline look thin.
+			const margin = 1.5 / Math.cos(Math.PI / this.sides);
+			const clipR = (this.drawSize * sizeMul + margin) * sc;
+			const clipAngle = this.angle + Math.PI / sides;        // matches the outer layer's rotation (i=0).
+			ctx.save();
+			ctx.beginPath();
+			for (let j = 0; j < this.sides; j++) {
+				const a = clipAngle + (j / this.sides) * Math.PI * 2;
+				ctx.lineTo(this.pos.x * sc + Math.cos(a) * clipR, this.pos.y * sc + Math.sin(a) * clipR);
+			}
+			ctx.closePath();
+			ctx.clip();
+		}
 		for (let i = 0; i < this.layers; ++i) {
 			drawPolygon(
 				ctx,
@@ -369,6 +465,7 @@ export class Shape {
 			ctx.fill();
 			ctx.stroke();
 		}
+		if (tiered) ctx.restore();
 		ctx.globalAlpha = 1;
 	}
 	collide(other) {
@@ -402,61 +499,96 @@ export class Shape {
 			});
 		}
 	}
-	// Render a gem version of this shape: each face (triangle from center to
-	// an edge) is shaded based on a notional light from above, the whole body
-	// is drawn translucent, and inner ridge lines from center → vertices give
-	// a faceted crystal look.
+	// Render a gem version of this shape. Outline / silhouette is identical to
+	// the standard shape — only the inside is different: each layer is split
+	// into shaded triangle facets from the center to each pair of adjacent
+	// polygon vertices, drawn slightly translucent. Eggs use 18 facets so the
+	// circle has visible internal texture.
 	_renderGem(ctx, sizeMul, fade) {
-		const sides = Math.max(3, this.sides);
 		const sc = game.scale * game.room.fov;
 		const cx = this.pos.x * sc;
 		const cy = this.pos.y * sc;
 		const baseR = this.drawSize * sizeMul * sc;
-		const cosFactor = Math.cos(Math.PI / sides);
 		const base = this.fillStyle;
 		const stroke = this.strokeStyle;
+		const phase = this._gemPhase || 0;
+		const contrast = this._gemContrast ?? 0.4;
+		const mid = this._gemMid ?? 0.5;
+		const alpha = this._gemAlpha ?? 0.7;
+		// Pentagons may go darker than their base color; everything else stays
+		// at the base color or brighter (shade clamped to 1.0).
+		const minShade = this.type === 3 ? 0.18 : 1.0;
+		const sectorShade = (a) => Math.max(minShade, Math.min(1.5, mid - contrast * Math.sin(a + phase)));
+
+		const isEgg = this.sides === 0;
+		// Eggs render as actual concentric circles (ctx.arc) with the same
+		// cos(π/3) = 0.5 layer shrink the standard egg uses — so tiered gem
+		// eggs keep their nested-circles look instead of collapsing into a
+		// barely-shrunk 18-side polygon.
+		if (isEgg) {
+			const facets = 18;
+			const eggCosFactor = 0.5;
+			for (let layer = 0; layer < this.layers; ++layer) {
+				const r = baseR * Math.pow(eggCosFactor, layer);
+				for (let i = 0; i < facets; ++i) {
+					const a1 = this.angle + (i / facets) * Math.PI * 2;
+					const a2 = this.angle + ((i + 1) / facets) * Math.PI * 2;
+					ctx.globalAlpha = alpha * fade;
+					ctx.fillStyle = darken(base, sectorShade((a1 + a2) / 2));
+					ctx.beginPath();
+					ctx.moveTo(cx, cy);
+					ctx.arc(cx, cy, r, a1, a2);
+					ctx.closePath();
+					ctx.fill();
+				}
+				ctx.globalAlpha = (alpha + 0.2) * fade;
+				ctx.strokeStyle = stroke;
+				ctx.lineWidth = 3 * sc;
+				ctx.beginPath();
+				ctx.arc(cx, cy, r, 0, Math.PI * 2);
+				ctx.stroke();
+			}
+			return;
+		}
+
+		const sides = Math.max(3, this.sides);
+		const cosFactor = Math.cos(Math.PI / sides);
+
 		for (let layer = 0; layer < this.layers; ++layer) {
 			const r = baseR * Math.pow(cosFactor, layer);
-			const layerAngle = this.angle + ((layer & 1) ? 0 : Math.PI / sides);
-			// Per-face triangles, brighter on top / darker on bottom.
+			// Match the standard render's per-layer rotation so a tiered gem
+			// has the exact same outline as the corresponding standard tier.
+			const layerAngle = this.angle + (layer & 1 ? 0 : Math.PI / sides);
+			// Vertex positions: pure polygon, no jitter.
+			const verts = new Array(sides);
 			for (let i = 0; i < sides; ++i) {
-				const a1 = layerAngle + (i / sides) * Math.PI * 2;
-				const a2 = layerAngle + ((i + 1) / sides) * Math.PI * 2;
-				const faceAngle = (a1 + a2) / 2;
-				const shade = Math.max(0.2, Math.min(1, 0.5 - 0.4 * Math.sin(faceAngle)));
-				ctx.globalAlpha = 0.7 * fade;
-				ctx.fillStyle = darken(base, shade);
+				const a = layerAngle + (i / sides) * Math.PI * 2;
+				verts[i] = { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, a };
+			}
+			// Per-face triangles, shaded — the gem "texture".
+			for (let i = 0; i < sides; ++i) {
+				const v1 = verts[i];
+				const v2 = verts[(i + 1) % sides];
+				ctx.globalAlpha = alpha * fade;
+				ctx.fillStyle = darken(base, sectorShade((v1.a + v2.a) / 2));
 				ctx.beginPath();
 				ctx.moveTo(cx, cy);
-				ctx.lineTo(cx + Math.cos(a1) * r, cy + Math.sin(a1) * r);
-				ctx.lineTo(cx + Math.cos(a2) * r, cy + Math.sin(a2) * r);
+				ctx.lineTo(v1.x, v1.y);
+				ctx.lineTo(v2.x, v2.y);
 				ctx.closePath();
 				ctx.fill();
 			}
-			// Outer outline (thicker, darker).
-			ctx.globalAlpha = 0.9 * fade;
+			// Outer outline only.
+			ctx.globalAlpha = (alpha + 0.2) * fade;
 			ctx.strokeStyle = stroke;
 			ctx.lineWidth = 3 * sc;
 			ctx.lineJoin = "round";
 			ctx.beginPath();
 			for (let i = 0; i < sides; ++i) {
-				const a = layerAngle + (i / sides) * Math.PI * 2;
-				const x = cx + Math.cos(a) * r;
-				const y = cy + Math.sin(a) * r;
-				if (i === 0) ctx.moveTo(x, y);
-				else ctx.lineTo(x, y);
+				if (i === 0) ctx.moveTo(verts[i].x, verts[i].y);
+				else ctx.lineTo(verts[i].x, verts[i].y);
 			}
 			ctx.closePath();
-			ctx.stroke();
-			// Faint inner ridge lines from center to each vertex — the facet edges.
-			ctx.globalAlpha = 0.35 * fade;
-			ctx.lineWidth = 1.5 * sc;
-			ctx.beginPath();
-			for (let i = 0; i < sides; ++i) {
-				const a = layerAngle + (i / sides) * Math.PI * 2;
-				ctx.moveTo(cx, cy);
-				ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
-			}
 			ctx.stroke();
 		}
 	}
@@ -481,6 +613,8 @@ export class Shape {
 			visited.add(best);
 			points.push({ x: best.pos.x, y: best.pos.y });
 			best._applyHit(damage);
+			best.touchedByClick = true;
+			state.statClickDamageDealt += damage;
 			current = best;
 		}
 		if (points.length >= 2) game.lightningBolts.push({ points, life: 18, maxLife: 18 });
