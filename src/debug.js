@@ -93,6 +93,14 @@ const actions = [
 			const cy = game.room.minY + game.room.maxY / 2;
 			game.shapes.push(new SentrySpawner(new Vec2(cx, cy)));
 		} },
+	{ label: "Spawn Gem Octagon",
+		run: () => {
+			const cx = game.room.minX + game.room.maxX / 2;
+			const cy = game.room.minY + game.room.maxY / 2;
+			const sh = new Shape(new Vec2(cx, cy));
+			sh.makeGemOctagon();
+			game.shapes.push(sh);
+		} },
 	{ label: () => {
 			const real = game.sieges.find((s) => !s.neutral);
 			return real ? "Sanctuary: Tier " + real.tier : "Sanctuary: OFF";

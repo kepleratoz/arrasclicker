@@ -84,6 +84,24 @@ export function darken(hex, brightness = 0.6) {
 	return result;
 }
 
+// HSL → #rrggbb. h in degrees, s/l in 0..1. Used by gem rendering to feed
+// rainbow rarity colors through darken() (which only accepts hex).
+export function hslToHex(h, s, l) {
+	h = ((h % 360) + 360) % 360;
+	const c = (1 - Math.abs(2 * l - 1)) * s;
+	const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+	const m = l - c / 2;
+	let r = 0, g = 0, b = 0;
+	if (h < 60)       { r = c; g = x; }
+	else if (h < 120) { r = x; g = c; }
+	else if (h < 180) {        g = c; b = x; }
+	else if (h < 240) {        g = x; b = c; }
+	else if (h < 300) { r = x;        b = c; }
+	else              { r = c;        b = x; }
+	const toHex = (v) => Math.round((v + m) * 255).toString(16).padStart(2, "0");
+	return "#" + toHex(r) + toHex(g) + toHex(b);
+}
+
 export const colors = {
 	blue: "#3ca4cb",
 	darkArena: "#a4a4ad",

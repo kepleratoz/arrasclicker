@@ -1,5 +1,5 @@
 import { state } from "./state.js";
-import { Vec2, darken, colors, formatNumber, REGEN_PER_FRAME, lerpColor } from "./utils.js";
+import { Vec2, darken, colors, formatNumber, REGEN_PER_FRAME, lerpColor, hslToHex } from "./utils.js";
 import { mouse } from "./input.js";
 import { drawPolygon, drawHealthBar } from "./render.js";
 import { game } from "./game.js";
@@ -212,7 +212,33 @@ export class Shape {
 		// evolution slowdown (×5) are handled inside the regen tick / setEvoTime.
 		this.maxHealth *= 250;
 		this.health *= 250;
+		// Apply the gem score boost. setType skipped it because isGem wasn't set
+		// yet at the time it was called; future setType calls (rarity edits via
+		// debug) handle it themselves.
+		this.score *= this._gemScoreBoost();
 		this.setEvoTime();
+	}
+	// Gem score multiplier: stacks ×100 on top of the rarity multiplier, with a
+	// ×1000 floor so common gems still feel valuable (Common Gem = ×1000).
+	_gemScoreBoost() {
+		const rarityMul = this.rarity === ETHEREAL ? 35000 : Math.pow(10, Math.max(0, this.rarity + 1));
+		return Math.max(1000, rarityMul * 100) / rarityMul;
+	}
+	// Gem-exclusive Octagon variant. Built on top of the standard gem path but
+	// recoloured to the poison-click green and flagged so _renderGem swaps in
+	// the grid-and-crosses interior pattern.
+	makeGemOctagon() {
+		this.layers = 1;
+		this.setType(makeShapeData(6, -1, 1));   // type 6 = Octagon, size 112.
+		this.size *= 0.4;                        // smaller than a standard Octagon.
+		this.fillStyle = "#5cd970";              // poison click upgrade colour.
+		this.strokeStyle = darken("#5cd970");
+		this.makeGem();
+		this.isGemOctagon = true;
+		this.maxHealth *= 0.5;
+		this.health = this.maxHealth;
+		// Never evolve — keep size and layers fixed regardless of rarity edits.
+		this.evoTime = Infinity;
 	}
 	makeGold(type) {
 		// Gem takes priority over Gold — a Gem shape can never become Gold.
@@ -238,6 +264,10 @@ export class Shape {
 		this.score = data.score;
 		this.type = data.type;
 		this.rarity = data.rarity ?? -1;
+		// Gems get a ×100 score multiplier that stacks on top of the rarity
+		// multiplier, with a 1000× floor for common gems. So Common Gem = ×1000,
+		// Shiny Gem = ×1000 (10 × 100), Legendary Gem = ×10000, etc.
+		if (this.isGem) this.score *= this._gemScoreBoost();
 		const rarityHealth = this.rarity === ETHEREAL ? 3
 			: this.rarity === 3 ? 8
 			: this.rarity === 2 ? 6
@@ -245,6 +275,10 @@ export class Shape {
 			: this.rarity === 0 ? 2
 			: 1;
 		this.maxHealth = TYPE_BASE_HEALTH[this.type] * rarityHealth;
+		// Gem Octagon: rarity scales off a fixed 20000 base instead of the
+		// (tiny) per-type base, so rarity changes via debug edition still feel
+		// like a gem.
+		if (this.isGemOctagon) this.maxHealth = 20000 * rarityHealth;
 		this.health = this.maxHealth;
 		this.damage = TYPE_BASE_DAMAGE[this.type];   // OSA-style body damage; consumed by Bullet collisions.
 		this.penetration = 1;                        // baseline pen for shapes (no upgrade track).
@@ -254,6 +288,8 @@ export class Shape {
 		const triangleAdjust = this.sides === 3 && this.layers > 1 ? 2 / (2 + (this.layers - 1)) : 1;
 		this.size /= Math.pow(cosFactor, this.layers - 1);
 		this.size *= triangleAdjust;
+		// Gem Octagon keeps its fixed shrunk size regardless of rarity/layer changes.
+		if (this.isGemOctagon) this.size *= 0.4;
 	}
 	evolve() {
 		if (this.isGold) return;   // gold shapes can't evolve.
@@ -339,7 +375,7 @@ export class Shape {
 					// Midas Touch: 0.1% per level (max 0.4% at level 4). Converts the shape
 				// into a RANDOM eligible gold-type, not the shape's own type.
 				const midasChance = 0.001 * (state.midasLevel || 0);
-				if (equipped === "midas" && midasChance > 0 && Math.random() < midasChance) {
+				if (equipped === "midas" && !this.isGem && midasChance > 0 && Math.random() < midasChance) {
 					const types = eligibleGoldTypes();
 					this.makeGold(types[Math.floor(Math.random() * types.length)]);
 				}
@@ -422,6 +458,12 @@ export class Shape {
 			const strokeL = Math.round(35 * colorScale);
 			ctx.fillStyle = `hsl(${hue}, 80%, ${fillL}%)`;
 			ctx.strokeStyle = `hsl(${hue}, 60%, ${strokeL}%)`;
+		} else if (this.rarity === 2) {
+			// Shadow: slightly darker than the global colors.shadow. Stroke matches
+			// the button-style dark border (#222) but slightly translucent so it
+			// still feels "shadowy" rather than a hard black outline.
+			ctx.fillStyle = darken("#0a0a0a40", colorScale);
+			ctx.strokeStyle = darken("#222222b0", colorScale);
 		} else {
 			ctx.fillStyle = darken(this.fillStyle, colorScale);
 			ctx.strokeStyle = darken(this.strokeStyle, colorScale);
@@ -458,6 +500,15 @@ export class Shape {
 			ctx.closePath();
 			ctx.clip();
 		}
+		// Shadow rarity uses a translucent fill (alpha 0x20), so the default
+		// per-layer fill stack made the corners of tiered shadow shapes (covered
+		// only by the outer layer) read as visibly lighter than the inner region
+		// (covered by multiple layers). For shadow we only fill once at the
+		// outermost layer so the body stays uniform. The outer-layer stroke is
+		// clipped to the polygon's interior so it provides a real border without
+		// the outward-projecting halo the unclipped stroke produced.
+		const isShadow = this.rarity === 2;
+		if (isShadow) ctx.lineJoin = "round";
 		for (let i = 0; i < this.layers; ++i) {
 			drawPolygon(
 				ctx,
@@ -467,8 +518,21 @@ export class Shape {
 				this.angle + (i & 1 ? 0 : Math.PI / sides),
 				this.sides,
 			);
-			ctx.fill();
-			ctx.stroke();
+			if (!isShadow || i === 0) ctx.fill();
+			if (isShadow && i === 0) {
+				// Only the inner half of the stroke remains visible (the half
+				// inside the polygon), so the border doesn't halo. Doubled
+				// lineWidth keeps the visible thickness in line with other rarities.
+				ctx.save();
+				ctx.clip();
+				const prevW = ctx.lineWidth;
+				ctx.lineWidth = prevW * 2;
+				ctx.stroke();
+				ctx.lineWidth = prevW;
+				ctx.restore();
+			} else {
+				ctx.stroke();
+			}
 		}
 		if (tiered) ctx.restore();
 		ctx.globalAlpha = 1;
@@ -510,12 +574,29 @@ export class Shape {
 	// polygon vertices, drawn slightly translucent. Eggs use 18 facets so the
 	// circle has visible internal texture.
 	_renderGem(ctx, sizeMul, fade) {
+		if (this.isGemOctagon) { this._renderGemOctagon(ctx, sizeMul, fade); return; }
 		const sc = game.scale * game.room.fov;
 		const cx = this.pos.x * sc;
 		const cy = this.pos.y * sc;
 		const baseR = this.drawSize * sizeMul * sc;
-		const base = this.fillStyle;
-		const stroke = this.strokeStyle;
+		// Rainbow rarity: pull live hue-cycling colors so gem faceting paints
+		// over a rainbow body. darken() needs hex, so hslToHex bridges it.
+		let base = this.fillStyle;
+		let stroke = this.strokeStyle;
+		if (this.rarity === 3) {
+			const hue = (Date.now() * 0.1) % 360;
+			base = hslToHex(hue, 0.8, 0.6);
+			stroke = hslToHex(hue, 0.6, 0.35);
+		} else if (this.rarity === 2) {
+			// Shadow gems: the global shadow colour is translucent (alpha 0x20),
+			// which collapses gem facet shading into near-invisibility. Use an
+			// opaque dark base so the gem's own _gemAlpha controls translucency.
+			// Base must sit above #222 — darken()'s formula uses 34 as an anchor,
+			// so a #222 base produces zero facet variation. #3a3a3a gives the
+			// darken brightness factor real room to produce visible facets.
+			base = "#3a3a3a";
+			stroke = "#0f0f0f";
+		}
 		const phase = this._gemPhase || 0;
 		const contrast = this._gemContrast ?? 0.4;
 		const mid = this._gemMid ?? 0.5;
@@ -596,6 +677,106 @@ export class Shape {
 			ctx.closePath();
 			ctx.stroke();
 		}
+	}
+	// 3×3 grid pattern inside an octagon. The octagon's slant edges land exactly
+	// on the diagonal of each corner cell (cell extends from R·sin(π/8) to R·cos(π/8)
+	// on each axis), so the "diagonally-split corner tile, outer half empty" look
+	// emerges naturally from the outline — no per-corner diagonal drawing needed.
+	_renderGemOctagon(ctx, sizeMul, fade) {
+		const sc = game.scale * game.room.fov;
+		const cx = this.pos.x * sc;
+		const cy = this.pos.y * sc;
+		const R = this.drawSize * sizeMul * sc;
+		const alpha = this._gemAlpha ?? 0.72;
+		const phase = this._gemPhase || 0;
+		const contrast = this._gemContrast ?? 0.3;
+		const mid = this._gemMid ?? 1.15;
+		let baseColor = this.fillStyle;
+		let strokeColor = this.strokeStyle;
+		if (this.rarity === 3) {
+			const hue = (Date.now() * 0.1) % 360;
+			baseColor = hslToHex(hue, 0.8, 0.6);
+			strokeColor = hslToHex(hue, 0.6, 0.35);
+		} else if (this.rarity === 2) {
+			baseColor = "#3a3a3a";
+			strokeColor = "#0f0f0f";
+		}
+		const sectorShade = (a) => Math.max(1.0, Math.min(1.5, mid - contrast * Math.sin(a + phase)));
+		const cos8 = Math.cos(Math.PI / 8);
+		const sin8 = Math.sin(Math.PI / 8);
+		const outer = R * cos8;
+		const inner = R * sin8;
+		ctx.save();
+		ctx.translate(cx, cy);
+		ctx.rotate(this.angle);
+		// Octagon vertices in local coords (flat sides aligned to the axes).
+		const verts = new Array(8);
+		for (let i = 0; i < 8; i++) {
+			const a = Math.PI / 8 + (i * Math.PI) / 4;
+			verts[i] = { x: R * Math.cos(a), y: R * Math.sin(a), a };
+		}
+		const octPath = new Path2D();
+		for (let i = 0; i < 8; i++) {
+			if (i === 0) octPath.moveTo(verts[i].x, verts[i].y);
+			else octPath.lineTo(verts[i].x, verts[i].y);
+		}
+		octPath.closePath();
+		// Per-tile gem texture: each of the 9 tiles is treated as its own mini-gem,
+		// subdivided into 4 triangular sectors radiating from the tile's centre to
+		// its 4 corners — the same "fan of shaded triangles" technique the standard
+		// gem render uses for polygon sides. Corner tiles get clipped by the
+		// octagon's slant edges automatically.
+		const tileXs = [-outer, -inner, inner, outer];
+		const tileYs = [-outer, -inner, inner, outer];
+		ctx.save();
+		ctx.clip(octPath);
+		ctx.globalAlpha = alpha * fade;
+		for (let row = 0; row < 3; row++) {
+			for (let col = 0; col < 3; col++) {
+				const x0 = tileXs[col];
+				const x1 = tileXs[col + 1];
+				const y0 = tileYs[row];
+				const y1 = tileYs[row + 1];
+				const tcx = (x0 + x1) / 2;
+				const tcy = (y0 + y1) / 2;
+				// Per-tile phase offset keeps each tile's facet pattern distinct.
+				const tilePhase = phase + (row * 3 + col) * 0.7;
+				const corners = [
+					{ x: x0, y: y0 }, { x: x1, y: y0 },
+					{ x: x1, y: y1 }, { x: x0, y: y1 },
+				];
+				for (let i = 0; i < 4; i++) {
+					const c1 = corners[i];
+					const c2 = corners[(i + 1) % 4];
+					const midA = Math.atan2((c1.y + c2.y) / 2 - tcy, (c1.x + c2.x) / 2 - tcx);
+					ctx.fillStyle = darken(baseColor, Math.max(1.0, Math.min(1.5, mid - contrast * Math.sin(midA + tilePhase))));
+					ctx.beginPath();
+					ctx.moveTo(tcx, tcy);
+					ctx.lineTo(c1.x, c1.y);
+					ctx.lineTo(c2.x, c2.y);
+					ctx.closePath();
+					ctx.fill();
+				}
+			}
+		}
+		// Inner 3×3 grid lines, matching the outline thickness/colour.
+		ctx.strokeStyle = strokeColor;
+		ctx.lineWidth = 3 * sc;
+		ctx.lineCap = "butt";
+		ctx.beginPath();
+		ctx.moveTo(-inner, -outer); ctx.lineTo(-inner, outer);
+		ctx.moveTo( inner, -outer); ctx.lineTo( inner, outer);
+		ctx.moveTo(-outer, -inner); ctx.lineTo(outer, -inner);
+		ctx.moveTo(-outer,  inner); ctx.lineTo(outer,  inner);
+		ctx.stroke();
+		ctx.restore();
+		// Outline.
+		ctx.globalAlpha = (alpha + 0.2) * fade;
+		ctx.strokeStyle = strokeColor;
+		ctx.lineWidth = 3 * sc;
+		ctx.lineJoin = "round";
+		ctx.stroke(octPath);
+		ctx.restore();
 	}
 	_fireLightning(damage) {
 		const MAX_CHAIN = 6;

@@ -698,24 +698,34 @@ function drawAchievementTooltip(ctx, anchorX, anchorY, anchorW, ach, unlocked, p
 	const h = 90 * s;
 	let x = anchorX + anchorW / 2 - w / 2;
 	x = Math.max(8 * s, Math.min(game.width - w - 8 * s, x));
-	// Tooltip floats UP out of the crate to a resting spot just above it.
+	// Tooltip slides UP out from behind the crate to a resting spot above it.
 	// If there's no room above, flip below as a fallback.
-	let finalY = anchorY - h - 10 * s;
-	if (finalY < 10 * s) finalY = anchorY + anchorW + 10 * s;
-	// Animate from BEHIND the crate (start aligned with the crate's top edge)
-	// up to the resting spot — combined with the hovered-crate-on-top redraw
-	// in renderAchievements, the tooltip appears to slide out the top of the
-	// crate. Easing is 1-(1-p)^2 — quick start, gentle settle.
-	const eased = 1 - Math.pow(1 - progress, 2);
-	const startY = anchorY;
+	const flipBelow = anchorY - h - 10 * s < 10 * s;
+	const finalY = flipBelow ? anchorY + anchorW + 10 * s : anchorY - h - 10 * s;
+	// Ease-out cubic: quick start, gentle settle.
+	const eased = 1 - Math.pow(1 - progress, 3);
+	// Start fully tucked behind the crate (tooltip's far edge aligned to crate
+	// edge), end at the resting spot.
+	const startY = flipBelow ? anchorY + anchorW - h : anchorY;
 	const y = startY + (finalY - startY) * eased;
 	const title = unlocked ? ach.title : "Unknown";
 	const desc = unlocked ? ach.desc : "You have not unlocked this yet!";
+	ctx.save();
+	// Clip to the region OUTSIDE the crate, so any part of the tooltip still
+	// overlapping the crate stays hidden — the tooltip emerges cleanly from
+	// behind it instead of poking out the sides.
+	ctx.beginPath();
+	if (flipBelow) {
+		ctx.rect(0, anchorY + anchorW, game.width, game.height);
+	} else {
+		ctx.rect(0, 0, game.width, anchorY);
+	}
+	ctx.clip();
 	ctx.globalAlpha = eased;
 	drawCrateBackground(ctx, x, y, w, h, unlocked ? "blue" : "red", false);
 	drawText(ctx, title, x + w / 2, y + 24 * s, false, true, true, 24 * s);
 	drawText(ctx, desc, x + w / 2, y + 58 * s, false, true, true, 16 * s);
-	ctx.globalAlpha = 1;
+	ctx.restore();
 }
 
 function renderAchievements() {
@@ -777,13 +787,13 @@ function renderAchievementToasts() {
 	const ctx = game.ctx;
 	const s = game.scale;
 	const now = performance.now();
-	// Prune expired toasts first.
 	for (let i = game.achievementToasts.length - 1; i >= 0; --i) {
 		if (now > game.achievementToasts[i].expiry) game.achievementToasts.splice(i, 1);
 	}
 	if (!game.achievementToasts.length) return;
 	const w = 340 * s;
-	const h = 80 * s;
+	const titleH = 80 * s;
+	const descH = 48 * s;
 	const right = game.width - 16 * s;
 	let y = 76 * s;
 	for (const t of game.achievementToasts) {
@@ -791,16 +801,27 @@ function renderAchievementToasts() {
 		if (!ach) continue;
 		const remaining = t.expiry - now;
 		const total = 4500;
-		const slideT = Math.min(1, (total - remaining) / 350);   // slide in over first 350ms
-		const fadeT = remaining < 600 ? remaining / 600 : 1;
-		const x = right - w + (1 - slideT) * (w + 16 * s);
-		ctx.globalAlpha = fadeT;
-		// Identical styling to the achievement's crate (split colors included).
-		drawCrateBackground(ctx, x, y, w, h, ach.crate, false);
-		drawAchievementIcon(ctx, x + 44 * s, y + h / 2, h * 0.7, ach.icon, true);
+		const elapsed = total - remaining;
+		// Slide in from the right over the first 450ms with an ease-out cubic so
+		// the toast decelerates as it settles. Opacity ramps in over a longer
+		// 700ms window for the gradual fade-in the design calls for.
+		const slideT = Math.min(1, elapsed / 450);
+		const slideEased = 1 - Math.pow(1 - slideT, 3);
+		const fadeIn = Math.min(1, elapsed / 700);
+		const fadeOut = remaining < 600 ? remaining / 600 : 1;
+		const alpha = Math.min(fadeIn, fadeOut);
+		const x = right - w + (1 - slideEased) * (w + 16 * s);
+		ctx.globalAlpha = alpha;
+		// Title row: button-styled background with the achievement icon + title.
+		drawCrateBackground(ctx, x, y, w, titleH, ach.crate, false);
+		drawAchievementIcon(ctx, x + 44 * s, y + titleH / 2, titleH * 0.7, ach.icon, true);
 		drawText(ctx, "Achievement unlocked!", x + 90 * s, y + 18 * s, false, true, false, 14 * s);
 		drawText(ctx, ach.title, x + 90 * s, y + 42 * s, false, true, false, 22 * s);
-		y += h + 8 * s;
+		// Description row: attached directly to the bottom of the title button,
+		// styled the same so they read as one piece. Uses a neutral blue panel.
+		drawCrateBackground(ctx, x, y + titleH, w, descH, "blue", false);
+		drawText(ctx, ach.desc, x + w / 2, y + titleH + descH / 2 + 5 * s, false, true, true, 14 * s);
+		y += titleH + descH + 8 * s;
 	}
 	ctx.globalAlpha = 1;
 }
@@ -809,12 +830,12 @@ function renderAchievementToasts() {
 // formula as rainbow shapes; Shadow is semi-transparent black; the rest match
 // their canonical palette entries. Border stroke is unchanged (drawText uses
 // "#222" regardless).
-function rarityTextFill(rarity, isGold) {
+function rarityTextFill(rarity, isGold, isGem) {
 	if (isGold) return "#efc74b";   // gold-shape body color.
 	switch (rarity) {
 		case 0: return colors.shiny;
 		case 1: return colors.legendary;
-		case 2: return "rgba(20,20,20,0.55)";   // shadow — translucent black.
+		case 2: return isGem ? undefined : "rgba(20,20,20,0.55)";   // shadow gem uses default text so the thick stroke doesn't dominate the translucent fill.
 		case 3: { const h = (Date.now() * 0.1) % 360; return `hsl(${h}, 80%, 60%)`; }
 		case 4: return "rgba(122,211,219,0.55)";   // ethereal — translucent legendary cyan.
 		default: return undefined;   // falls back to default white in drawText.
@@ -1418,7 +1439,7 @@ function frame(now) {
 			const prefix = hovered.isGold ? "Golden " : hovered.isGem ? "Gem " : "";
 			const typeName = hovered.isSentry ? "Sentry" : prefix + TYPE_NAMES[hovered.type];
 			// Rarity-themed fill for the main hover line; stroke stays default.
-			drawText(game.ctx, rarityLabel + typeName + hpDisplay, x, yBase, false, true, false, 28 * s, rarityTextFill(hovered.rarity, hovered.isGold));
+			drawText(game.ctx, rarityLabel + typeName + hpDisplay, x, yBase, false, true, false, 28 * s, rarityTextFill(hovered.rarity, hovered.isGold, hovered.isGem));
 			if (!hovered.isSentry) drawText(game.ctx, "Tier " + hovered.layers, x, yBase + lineH, false, true, false, 24 * s);
 			drawText(game.ctx, formatNumber(hovered.score) + " score", x, yBase + lineH * 2, false, true, false, 24 * s);
 		}
