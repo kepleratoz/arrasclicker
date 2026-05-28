@@ -59,9 +59,17 @@ export const state = {
 	statShapeKillsClick: 0,
 	statShapeKillsTank: 0,
 	statRareKills: 0,
+	statShinyKills: 0,
+	statLegendaryKills: 0,
+	statShadowKills: 0,
+	statRainbowKills: 0,
 	statGoldKills: 0,
 	statTankDeaths: 0,
 	statUpgradesBought: 0,
+	// UI prefs — saved so the cursor size persists across sessions.
+	cursorSizeMul: 1.0,
+	// Achievement unlocks — set of ids that have been earned. Persists in save.
+	achievementsUnlocked: {},
 };
 
 // Fields that are unique to each map. Everything else (arenaFovUpgrades, shapesCap,

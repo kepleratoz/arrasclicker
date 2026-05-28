@@ -742,6 +742,14 @@ export class Tank {
 	// `claimCounts` is a Map<shape, number> of how many tanks already target each shape.
 	// Up to MAX_TANKS_PER_TARGET tanks may share one mob.
 	findNearest(claimCounts) {
+		// User-set priority target (shift-click) overrides everything else —
+		// rarity caps, type filters, even gem/gold protection. Once the
+		// priority dies or leaves game.shapes the override clears itself.
+		const priority = game.priorityTarget;
+		if (priority && game.shapes.includes(priority) && !(priority.isDead && priority.isDead())) {
+			return priority;
+		}
+		if (priority) game.priorityTarget = null;
 		// Mobs (Sentries / Sentry Sanctuaries) take priority over polygons. We
 		// pick the nearest mob if any are available; otherwise fall back to the
 		// nearest polygon. Lock-on / claim caps apply to both pools.

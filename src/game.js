@@ -50,6 +50,7 @@ class Game {
 		this.particles = [];        // [{ x, y, vx, vy, size, dying }] — gold-shape sparkle bits.
 		this.walls = [];            // [{ x, y, size }] — debug map-editor walls (session-only).
 		this.gemShards = [];        // short-lived shatter fragments spawned when a gem dies.
+		this.achievementToasts = [];   // [{ achId, expiry }] — slide-in unlock notifs (top-right).
 		this.lightningBolts = [];   // [{ points: [{x,y}, ...], life }] — lightning visuals fading out.
 		// `room`, `tabs`, `currentTab` are wired up in init() after circular imports settle.
 		this.room = null;
@@ -180,6 +181,25 @@ class Game {
 		for (const siege of this.sieges) siege.render(ctx);
 		for (const shape of this.shapes) shape.render(ctx);
 		for (const tank of this.tanks) tank.render(ctx);
+		// Priority target indicator: rotating red dotted ring around whatever
+		// the user shift-clicked. Cleared automatically when the target dies.
+		if (this.priorityTarget && !(this.priorityTarget.isDead && this.priorityTarget.isDead())) {
+			const sc = this.scale * this.room.fov;
+			const p = this.priorityTarget;
+			const r = (p.drawSize ?? p.size ?? 20) * sc + 12 * this.scale;
+			const dashLen = 10 * this.scale;
+			ctx.save();
+			ctx.translate(p.pos.x * sc, p.pos.y * sc);
+			ctx.rotate((Date.now() * 0.002) % (Math.PI * 2));
+			ctx.setLineDash([dashLen, dashLen]);
+			ctx.strokeStyle = "#e03e41";
+			ctx.lineWidth = 4 * this.scale;
+			ctx.beginPath();
+			ctx.arc(0, 0, r, 0, Math.PI * 2);
+			ctx.stroke();
+			ctx.setLineDash([]);
+			ctx.restore();
+		}
 
 		if (this.lightningBolts.length) {
 			const sc = this.scale * this.room.fov;
@@ -253,7 +273,7 @@ class Game {
 
 		// Cursor indicator
 		ctx.beginPath();
-		ctx.arc(mouse.x, mouse.y, mouse.right ? 100 : 10, 0, Math.PI * 2);
+		ctx.arc(mouse.x, mouse.y, (mouse.right ? 100 : 10) * (state.cursorSizeMul ?? 1), 0, Math.PI * 2);
 		ctx.fillStyle = "rgba(60,60,60,0.25)";
 		ctx.fill();
 

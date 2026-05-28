@@ -3,7 +3,7 @@ import { mouse, keys } from "./input.js";
 import { game } from "./game.js";
 import { Room } from "./room.js";
 import { Button } from "./button.js";
-import { Shape, TYPE_NAMES, makeShapeData } from "./shape.js";
+import { Shape, TYPE_NAMES, TYPE_SIZES, TYPE_SIDES, makeShapeData } from "./shape.js";
 import { drawText } from "./render.js";
 import { tabs, generalTab } from "./tabs.js";
 import { encode, decode, saveToStorage, loadFromStorage, enableAutoSave, onBeforeSave } from "./save.js";
@@ -74,6 +74,17 @@ function handleTankClicks() {
 			game.selectedTank = null;
 			mouse.leftClick = false;
 			return;
+		}
+		// Shift+click on a shape / mob marks it as the priority target. Tanks
+		// will lock onto it regardless of their normal rarity / type filters.
+		// Same target shift-clicked again clears it.
+		if (!t && shiftHeld) {
+			const sh = shapeUnderMouse();
+			if (sh && !(sh.isDead && sh.isDead())) {
+				game.priorityTarget = game.priorityTarget === sh ? null : sh;
+				mouse.leftClick = false;
+				return;
+			}
 		}
 		if (t) mouse.leftClick = false;
 	}
@@ -506,6 +517,259 @@ function renderSettingsStats(ctx, s, yStart) {
 	}
 }
 
+// =============================================================================
+// Achievements
+// =============================================================================
+// Each entry: id, title, description, icon (shape spec or { kind: "cursor" }),
+// and crate color (string key OR { split: [a, b] } for the diagonal-split crates).
+function highestScoreAcrossMaps() {
+	const cur = state.score || 0;
+	const other = state.maps && state.maps[state.currentMap === 0 ? 1 : 0]?.score || 0;
+	return Math.max(cur, other);
+}
+const ACHIEVEMENTS = [
+	// Score milestones.
+	{ id: "score_egg",      title: "Egg",      desc: "Reach 1,000 score.",                  icon: { type: 0 }, crate: "blue", check: () => highestScoreAcrossMaps() >= 1e3 },
+	{ id: "score_square",   title: "Square",   desc: "Reach 1,000,000 score.",              icon: { type: 1 }, crate: "blue", check: () => highestScoreAcrossMaps() >= 1e6 },
+	{ id: "score_triangle", title: "Triangle", desc: "Reach 1,000,000,000,000 score.",      icon: { type: 2 }, crate: "blue", check: () => highestScoreAcrossMaps() >= 1e12 },
+	{ id: "score_pentagon", title: "Pentagon", desc: "Reach 1e15 score.",                   icon: { type: 3 }, crate: "blue", check: () => highestScoreAcrossMaps() >= 1e15 },
+	{ id: "score_hexagon",  title: "Hexagon",  desc: "Reach 1e18 score.",                   icon: { type: 4 }, crate: "blue", check: () => highestScoreAcrossMaps() >= 1e18 },
+	// Click counts.
+	{ id: "click_1", title: "Click I",   desc: "Click a shape 1,000 times.",   icon: { kind: "cursor" }, crate: "click_blue",                check: () => (state.statShapeClicks || 0) >= 1000 },
+	{ id: "click_2", title: "Click II",  desc: "Click a shape 10,000 times.",  icon: { kind: "cursor" }, crate: { split: ["click_blue", "shiny"] },     check: () => (state.statShapeClicks || 0) >= 10000 },
+	{ id: "click_3", title: "Click III", desc: "Click a shape 100,000 times.", icon: { kind: "cursor" }, crate: { split: ["click_blue", "legendary"] }, check: () => (state.statShapeClicks || 0) >= 100000 },
+	// Rarity hunters.
+	{ id: "shiny_1", title: "Shiny Hunter I",   desc: "Kill 1,000 Shiny shapes.",   icon: { type: 0, rarity: 0 }, crate: "shiny", check: () => (state.statShinyKills || 0) >= 1000 },
+	{ id: "shiny_2", title: "Shiny Hunter II",  desc: "Kill 5,000 Shiny shapes.",   icon: { type: 1, rarity: 0 }, crate: "shiny", check: () => (state.statShinyKills || 0) >= 5000 },
+	{ id: "shiny_3", title: "Shiny Hunter III", desc: "Kill 25,000 Shiny shapes.",  icon: { type: 2, rarity: 0 }, crate: "shiny", check: () => (state.statShinyKills || 0) >= 25000 },
+	{ id: "legend_1", title: "Legendary Hunter I",   desc: "Kill 1,000 Legendary shapes.",   icon: { type: 0, rarity: 1 }, crate: "legendary", check: () => (state.statLegendaryKills || 0) >= 1000 },
+	{ id: "legend_2", title: "Legendary Hunter II",  desc: "Kill 5,000 Legendary shapes.",   icon: { type: 1, rarity: 1 }, crate: "legendary", check: () => (state.statLegendaryKills || 0) >= 5000 },
+	{ id: "legend_3", title: "Legendary Hunter III", desc: "Kill 25,000 Legendary shapes.",  icon: { type: 2, rarity: 1 }, crate: "legendary", check: () => (state.statLegendaryKills || 0) >= 25000 },
+	{ id: "shadow_1", title: "Shadow Hunter I",   desc: "Kill 1,000 Shadow shapes.",   icon: { type: 0, rarity: 2 }, crate: "shadow", check: () => (state.statShadowKills || 0) >= 1000 },
+	{ id: "shadow_2", title: "Shadow Hunter II",  desc: "Kill 5,000 Shadow shapes.",   icon: { type: 1, rarity: 2 }, crate: "shadow", check: () => (state.statShadowKills || 0) >= 5000 },
+	{ id: "shadow_3", title: "Shadow Hunter III", desc: "Kill 25,000 Shadow shapes.",  icon: { type: 2, rarity: 2 }, crate: "shadow", check: () => (state.statShadowKills || 0) >= 25000 },
+	{ id: "rainbow_1", title: "Rainbow Hunter I",   desc: "Kill 1,000 Rainbow shapes.",   icon: { type: 0, rarity: 3 }, crate: "rainbow", check: () => (state.statRainbowKills || 0) >= 1000 },
+	{ id: "rainbow_2", title: "Rainbow Hunter II",  desc: "Kill 5,000 Rainbow shapes.",   icon: { type: 1, rarity: 3 }, crate: "rainbow", check: () => (state.statRainbowKills || 0) >= 5000 },
+	{ id: "rainbow_3", title: "Rainbow Hunter III", desc: "Kill 25,000 Rainbow shapes.",  icon: { type: 2, rarity: 3 }, crate: "rainbow", check: () => (state.statRainbowKills || 0) >= 25000 },
+	// Gold.
+	{ id: "gold_1", title: "Gold Hunter I",  desc: "Kill 3 Gold shapes.",   icon: { type: 0, gold: true }, crate: "gold", check: () => (state.statGoldKills || 0) >= 3 },
+	{ id: "gold_2", title: "Gold Miner II",  desc: "Kill 10 Gold shapes.",  icon: { type: 1, gold: true }, crate: "gold", check: () => (state.statGoldKills || 0) >= 10 },
+	{ id: "gold_3", title: "Gold Expert III", desc: "Kill 30 Gold shapes.", icon: { type: 2, gold: true }, crate: "gold", check: () => (state.statGoldKills || 0) >= 30 },
+];
+
+function crateColorOf(name) {
+	switch (name) {
+		case "blue":       return "#3ca4cb";
+		case "click_blue": return "#3085db";
+		case "shiny":      return colors.shiny;
+		case "legendary":  return colors.legendary;
+		case "shadow":     return "#3a3a3a";
+		case "rainbow":    { const h = (Date.now() * 0.1) % 360; return `hsl(${h}, 80%, 60%)`; }
+		case "gold":       return "#efc74b";
+		case "red":        return "#cc3a3a";
+		default:           return "#888";
+	}
+}
+
+let achievementsSilentInit = false;
+function checkAchievements() {
+	if (!state.achievementsUnlocked) state.achievementsUnlocked = {};
+	for (const ach of ACHIEVEMENTS) {
+		if (state.achievementsUnlocked[ach.id]) continue;
+		if (ach.check()) {
+			state.achievementsUnlocked[ach.id] = true;
+			if (achievementsSilentInit) game.achievementToasts.push({ achId: ach.id, expiry: performance.now() + 4500 });
+		}
+	}
+	achievementsSilentInit = true;
+}
+
+function drawAchievementIcon(ctx, cx, cy, size, icon, unlocked) {
+	if (!unlocked) {
+		ctx.font = "bold " + (size * 0.7) + "px Ubuntu";
+		ctx.textAlign = "center";
+		ctx.textBaseline = "middle";
+		ctx.lineWidth = size / 8;
+		ctx.strokeStyle = "#222";
+		ctx.strokeText("?", cx, cy);
+		ctx.fillStyle = "#fff";
+		ctx.fillText("?", cx, cy);
+		return;
+	}
+	if (icon.kind === "cursor") {
+		ctx.fillStyle = "rgba(60,60,60,0.45)";
+		ctx.strokeStyle = "#222";
+		ctx.lineWidth = 3 * game.scale;
+		ctx.beginPath();
+		ctx.arc(cx, cy, size * 0.32, 0, Math.PI * 2);
+		ctx.fill();
+		ctx.stroke();
+		return;
+	}
+	// Shape icon. Gold gets the gold body color + a hint of aura behind it.
+	const rarity = icon.rarity ?? -1;
+	const tier = icon.tier ?? 1;
+	if (icon.gold) {
+		ctx.fillStyle = "rgba(254,202,63,0.35)";
+		ctx.beginPath();
+		ctx.arc(cx, cy, size * 0.5, 0, Math.PI * 2);
+		ctx.fill();
+		// Render the shape in gold (square color) regardless of base type.
+		drawGalleryShapeColored(ctx, cx, cy, size * 0.35, icon.type, tier, "#efc74b");
+		return;
+	}
+	drawGalleryShape(ctx, cx, cy, size * 0.35, icon.type, tier, rarity);
+}
+
+// Like drawGalleryShape but uses a forced color (for gold-icon override).
+function drawGalleryShapeColored(ctx, cx, cy, maxR, type, tier, color) {
+	const r = previewRadius(maxR, type, tier);
+	const data = makeShapeData(type, -1, tier);
+	const sides = data.sides;
+	ctx.fillStyle = color;
+	ctx.strokeStyle = darken(color);
+	ctx.lineWidth = 3 * game.scale;
+	ctx.lineJoin = "round";
+	const baseSides = Math.max(3, sides);
+	const cosFactor = Math.cos(Math.PI / baseSides);
+	for (let i = 0; i < Math.max(1, tier); i++) {
+		const layerR = r * Math.pow(cosFactor, i);
+		const rot = (i & 1) ? 0 : Math.PI / baseSides;
+		ctx.beginPath();
+		if (sides === 0) {
+			ctx.arc(cx, cy, layerR, 0, Math.PI * 2);
+		} else {
+			for (let j = 0; j < sides; j++) {
+				const a = rot + (j / sides) * Math.PI * 2;
+				const px = cx + Math.cos(a) * layerR;
+				const py = cy + Math.sin(a) * layerR;
+				if (j === 0) ctx.moveTo(px, py);
+				else ctx.lineTo(px, py);
+			}
+			ctx.closePath();
+		}
+		ctx.fill();
+		ctx.stroke();
+	}
+}
+
+// Button-style background for a crate or toast. `crate` is either a color key
+// string or { split: [a, b] } for the diagonal-split crates. Same two-tone
+// styling Buttons use elsewhere — top fill, 40 %-darker bottom band capped at
+// 32*s, hover highlight, dark border.
+function drawCrateBackground(ctx, x, y, w, h, crate, hovered) {
+	if (typeof crate === "object" && crate.split) {
+		const c1 = crateColorOf(crate.split[0]);
+		const c2 = crateColorOf(crate.split[1]);
+		ctx.fillStyle = c1;
+		ctx.fillRect(x, y, w, h);
+		ctx.fillStyle = c2;
+		ctx.beginPath();
+		ctx.moveTo(x + w, y);
+		ctx.lineTo(x, y + h);
+		ctx.lineTo(x + w, y + h);
+		ctx.closePath();
+		ctx.fill();
+	} else {
+		const fill = crateColorOf(crate);
+		ctx.fillStyle = fill;
+		ctx.fillRect(x, y, w, h);
+		ctx.fillStyle = darken(fill, 0.75);
+		const darkH = Math.min(h * 0.4, 32 * game.scale);
+		ctx.fillRect(x, y + h - darkH, w, darkH);
+	}
+	if (hovered) {
+		ctx.fillStyle = "rgba(255,255,255,0.12)";
+		ctx.fillRect(x, y, w, h);
+	}
+	ctx.lineWidth = 8 * game.scale;
+	ctx.strokeStyle = "#222";
+	ctx.strokeRect(x, y, w, h);
+}
+
+function drawAchievementCrate(ctx, x, y, size, ach, unlocked, hovered) {
+	drawCrateBackground(ctx, x, y, size, size, unlocked ? ach.crate : "red", hovered);
+	drawAchievementIcon(ctx, x + size / 2, y + size / 2, size, ach.icon, unlocked);
+}
+
+function drawAchievementTooltip(ctx, anchorX, anchorY, anchorW, ach, unlocked) {
+	const s = game.scale;
+	const w = 320 * s;
+	const h = 90 * s;
+	let x = anchorX + anchorW / 2 - w / 2;
+	x = Math.max(8 * s, Math.min(game.width - w - 8 * s, x));
+	let y = anchorY - h - 10 * s;
+	if (y < 10 * s) y = anchorY + (8 * s + (90 * s));   // flip below if no room above
+	const title = unlocked ? ach.title : "Unknown";
+	const desc = unlocked ? ach.desc : "You have not unlocked this yet!";
+	// Locked tooltips use the same red as the locked crate; unlocked use blue.
+	drawCrateBackground(ctx, x, y, w, h, unlocked ? "blue" : "red", false);
+	drawText(ctx, title, x + w / 2, y + 24 * s, false, true, true, 24 * s);
+	drawText(ctx, desc, x + w / 2, y + 58 * s, false, true, true, 16 * s);
+}
+
+function renderAchievements() {
+	const ctx = game.ctx;
+	const s = game.scale;
+	if (!state.achievementsUnlocked) state.achievementsUnlocked = {};
+	const cols = 6;
+	const crate = 72 * s;
+	const gap = 12 * s;
+	const totalW = cols * crate + (cols - 1) * gap;
+	const xStart = (game.width - totalW) / 2;
+	const yStart = 180 * s;
+	let hovered = null;
+	for (let i = 0; i < ACHIEVEMENTS.length; i++) {
+		const ach = ACHIEVEMENTS[i];
+		const col = i % cols;
+		const row = Math.floor(i / cols);
+		const x = xStart + col * (crate + gap);
+		const y = yStart + row * (crate + gap);
+		const unlocked = !!state.achievementsUnlocked[ach.id];
+		const isHover = mouse.x >= x && mouse.x <= x + crate && mouse.y >= y && mouse.y <= y + crate;
+		drawAchievementCrate(ctx, x, y, crate, ach, unlocked, isHover);
+		if (isHover) hovered = { ach, x, y, w: crate, unlocked };
+	}
+	if (hovered) drawAchievementTooltip(ctx, hovered.x, hovered.y, hovered.w, hovered.ach, hovered.unlocked);
+	// Summary at bottom: "N / Total unlocked"
+	const total = ACHIEVEMENTS.length;
+	const unlocked = ACHIEVEMENTS.reduce((n, a) => n + (state.achievementsUnlocked[a.id] ? 1 : 0), 0);
+	drawText(ctx, unlocked + " / " + total + " unlocked",
+		game.width / 2, game.height - 40 * s, false, true, true, 24 * s);
+}
+
+function renderAchievementToasts() {
+	const ctx = game.ctx;
+	const s = game.scale;
+	const now = performance.now();
+	// Prune expired toasts first.
+	for (let i = game.achievementToasts.length - 1; i >= 0; --i) {
+		if (now > game.achievementToasts[i].expiry) game.achievementToasts.splice(i, 1);
+	}
+	if (!game.achievementToasts.length) return;
+	const w = 340 * s;
+	const h = 80 * s;
+	const right = game.width - 16 * s;
+	let y = 76 * s;
+	for (const t of game.achievementToasts) {
+		const ach = ACHIEVEMENTS.find((a) => a.id === t.achId);
+		if (!ach) continue;
+		const remaining = t.expiry - now;
+		const total = 4500;
+		const slideT = Math.min(1, (total - remaining) / 350);   // slide in over first 350ms
+		const fadeT = remaining < 600 ? remaining / 600 : 1;
+		const x = right - w + (1 - slideT) * (w + 16 * s);
+		ctx.globalAlpha = fadeT;
+		// Identical styling to the achievement's crate (split colors included).
+		drawCrateBackground(ctx, x, y, w, h, ach.crate, false);
+		drawAchievementIcon(ctx, x + 44 * s, y + h / 2, h * 0.7, ach.icon, true);
+		drawText(ctx, "Achievement unlocked!", x + 90 * s, y + 18 * s, false, true, false, 14 * s);
+		drawText(ctx, ach.title, x + 90 * s, y + 42 * s, false, true, false, 22 * s);
+		y += h + 8 * s;
+	}
+	ctx.globalAlpha = 1;
+}
+
 // Hover-info fill color keyed by rarity. Rainbow cycles hue with the same
 // formula as rainbow shapes; Shadow is semi-transparent black; the rest match
 // their canonical palette entries. Border stroke is unchanged (drawText uses
@@ -526,9 +790,9 @@ function rarityTextFill(rarity, isGold) {
 // opens a dropdown of the FX toggles (Shape, Bullet, Damage). Achievements and
 // Gallery open empty placeholder panels for now.
 const TOP_MENU_BUTTONS = [
-	{ key: "settings",     label: "Settings",     color: "#3ca4cb" },
-	{ key: "achievements", label: "Achievements", color: "#efc74b" },
-	{ key: "gallery",      label: "Gallery",      color: "#8d6adf" },
+	{ key: "settings",     label: "Settings (E)",     color: "#3ca4cb" },
+	{ key: "achievements", label: "Achievements (O)", color: "#efc74b" },
+	{ key: "gallery",      label: "Gallery (G)",      color: "#8d6adf" },
 ];
 function topMenuLayout() {
 	const s = game.scale;
@@ -554,9 +818,15 @@ function renderTopMiddleMenu() {
 		const x = xStart + i * (w + gap);
 		const active = game.openMenu === b.key;
 		const hovered = mouse.x >= x && mouse.x <= x + w && mouse.y >= y && mouse.y <= y + h;
-		const pressed = (hovered && mouse.left) || active;
+		const pressed = hovered && mouse.left;
 		drawTwoToneRect(ctx, x, y, w, h, b.color, hovered, pressed, s);
 		drawText(ctx, b.label, x + w / 2, y + h / 2, false, true, true, 22 * s);
+		// While a menu is open, only the active button stays at full brightness
+		// — the other top buttons get the same dark overlay as the background.
+		if (game.openMenu && !active) {
+			ctx.fillStyle = "rgba(20,20,28,0.55)";
+			ctx.fillRect(x, y, w, h);
+		}
 		if (hovered && mouse.leftRelease) {
 			game.openMenu = active ? null : b.key;
 			game.gallerySelected = null;   // every open / switch starts at the top-level grid.
@@ -589,9 +859,8 @@ function renderOpenMenu() {
 		renderSettingsStats(ctx, s, y);
 	} else if (game.openMenu === "gallery") {
 		renderGallery();
-	} else {
-		// Achievements: empty placeholder.
-		drawText(ctx, "(empty for now)", game.width / 2, game.height / 2, false, true, true, 30 * s);
+	} else if (game.openMenu === "achievements") {
+		renderAchievements();
 	}
 	// ESC closes the menu.
 	if (keys.justPressed.has("Escape")) {
@@ -602,10 +871,27 @@ function renderOpenMenu() {
 
 const RARITY_DISPLAY = { "-1": "Normal", 0: "Shiny", 1: "Legendary", 2: "Shadow", 3: "Rainbow", 4: "Ethereal" };
 
-// Draw a shape icon for the gallery: same nested-polygon technique as in-world
-// shapes (one stroked polygon per tier-layer, shrunk by cos(π/sides) each ring).
-// Rainbow rarity (3) gets the hue-cycling fill that matches the live render.
-function drawGalleryShape(ctx, cx, cy, r, type, tier, rarity) {
+// Hexagon tier-1 (size 28) is the reference for previews — it fills `maxR`.
+// Eggs (size 5) end up about 18% of that. Tiered shapes' natural size grows
+// past `maxR`, so we clamp so they don't bleed past their crate.
+const PREVIEW_REF_SIZE = 28;
+function previewRadius(maxR, type, tier) {
+	const sides = TYPE_SIDES[type] ?? 0;
+	const baseSize = TYPE_SIZES[type] ?? 20;
+	const baseSides = Math.max(3, sides);
+	const cosFactor = Math.cos(Math.PI / baseSides);
+	const triangleAdjust = sides === 3 && tier > 1 ? 2 / (2 + (tier - 1)) : 1;
+	const natural = (baseSize / Math.pow(cosFactor, Math.max(0, tier - 1))) * triangleAdjust;
+	const scaled = (natural / PREVIEW_REF_SIZE) * maxR;
+	return Math.min(maxR, scaled);
+}
+
+// Draw a shape icon for the gallery/achievements: same nested-polygon technique
+// as in-world shapes (one stroked polygon per tier-layer, shrunk by cos(π/sides)
+// each ring). `maxR` is the largest a shape may render at — eggs come out small
+// and tiered hexagons get clamped so they don't bleed past their crate.
+function drawGalleryShape(ctx, cx, cy, maxR, type, tier, rarity) {
+	const r = previewRadius(maxR, type, tier);
 	const data = makeShapeData(type, rarity ?? -1, tier);
 	const sides = data.sides;
 	let fill = data.color;
@@ -999,13 +1285,42 @@ function renderMapOverlay() {
 	if (keys.justPressed.has("Escape")) game.mapOverlayOpen = false;
 }
 
+// Keyboard hotkeys for the top-bar buttons. Map view (overlay) swallows all
+// shortcuts so it can use its own input. S / L only fire outside any menu;
+// G / O / E toggle their menus from anywhere.
+function handleHotkeys() {
+	if (game.mapOverlayOpen) return;
+	if (keys.justPressed.has("KeyS") && !game.openMenu) saveButton.callback();
+	if (keys.justPressed.has("KeyL") && !game.openMenu) loadButton.callback();
+	if (keys.justPressed.has("KeyG")) {
+		game.openMenu = game.openMenu === "gallery" ? null : "gallery";
+		game.gallerySelected = null;
+	}
+	if (keys.justPressed.has("KeyO")) {
+		game.openMenu = game.openMenu === "achievements" ? null : "achievements";
+		game.gallerySelected = null;
+	}
+	if (keys.justPressed.has("KeyE")) {
+		game.openMenu = game.openMenu === "settings" ? null : "settings";
+		game.gallerySelected = null;
+	}
+}
+
 function frame(now) {
 	if (lastFrameTime > 0 && now - lastFrameTime > 500) resyncTimersAfterPause(now);
 	lastFrameTime = now;
+	handleHotkeys();
 	const overlayOpen = !!game.mapOverlayOpen;
 	// Capture the click state for stat tracking before any suppression kicks in.
 	const trackClickThisFrame = mouse.leftClick && !overlayOpen && !game.openMenu;
 	game._clickHitShape = false;
+	// Wheel over the arena (left half) adjusts the cursor size, clamped to
+	// 0.5..1.5× the default. Wheel inside the upgrade panel still feeds the
+	// upgrade scroll logic in game.render.
+	if (mouse.wheelDelta !== 0 && !overlayOpen && !game.openMenu && mouse.x < game.width / 2) {
+		state.cursorSizeMul = Math.max(0.5, Math.min(1.5, (state.cursorSizeMul ?? 1) - mouse.wheelDelta * 0.001));
+		mouse.wheelDelta = 0;
+	}
 	if (!overlayOpen) {
 		// Auto-spawn / despawn the Neutral Sanctuary. The gate lives in mapSwitch.js
 		// and is always-true on Crash Zone (so the user can find and repair it).
@@ -1033,6 +1348,9 @@ function frame(now) {
 		if (game._clickHitShape) state.statShapeClicks++;
 		else state.statClickMisses++;
 	}
+	// Achievement progress is checked every frame — cheap, just compares
+	// counters against thresholds. Newly unlocked entries push a toast.
+	checkAchievements();
 	// While the overlay is open, suppress mouse clicks so background buttons /
 	// tabs / upgrade rows don't fire when the user clicks a hexagon. Saved
 	// values are restored before renderMapOverlay so its own hit-tests still work.
@@ -1045,8 +1363,8 @@ function frame(now) {
 	game.render(drawText);
 	if (!overlayOpen && !game.openMenu) handleSanctuaryRepair();
 	try {
-		saveButton.render(game.ctx, 6 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Save", false);
-		loadButton.render(game.ctx, 106 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Load", false);
+		saveButton.render(game.ctx, 6 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Save (S)", false);
+		loadButton.render(game.ctx, 106 * game.scale, 6 * game.scale, 100 * game.scale, 50 * game.scale, "Load (L)", false);
 		renderDebugPanel(game.ctx);
 		renderMapTab();
 		renderTankUpgradePanel();
@@ -1087,6 +1405,11 @@ function frame(now) {
 		mouse.leftRelease = savedRelease;
 		mouse.wheelDelta = savedWheel;
 		try { renderMapOverlay(); } catch (e) { console.error(e); }
+	}
+	// Achievement toasts render on top of everything but only outside of any
+	// menu/overlay (they're noisy and the user is reading a panel otherwise).
+	if (!overlayOpen && !game.openMenu) {
+		try { renderAchievementToasts(); } catch (e) { console.error(e); }
 	}
 	mouse.resetClicks();
 	keys.resetFrame();

@@ -35,8 +35,8 @@ const TYPE_COLORS = [colors.egg, colors.square, colors.triangle, colors.pentagon
 const RARITY_COLORS = [colors.shiny, colors.legendary, colors.shadow, colors.ultra, "#7ad3db20"];
 const ETHEREAL = 4;
 const ETHEREAL_VISIBLE_DIST = 100;
-const TYPE_SIZES = [5, 20, 20, 26, 28, 56, 112, 224];
-const TYPE_SIDES = [0, 4, 3, 5, 6, 7, 8, 9];
+export const TYPE_SIZES = [5, 20, 20, 26, 28, 56, 112, 224];
+export const TYPE_SIDES = [0, 4, 3, 5, 6, 7, 8, 9];
 const TYPE_BASE_SCORES = [1, 200, 40000, 8e6, 32e8, 32e10, 64e12, 128e14];
 // OSA polygon HP, derived from server/lib/definitions/groups/food.js and constants.js
 // (basePolygonHealth = 2). Egg=0.5×base, Square=1×, Triangle=3×, Pentagon=10×, Hexagon=20×.
@@ -130,6 +130,10 @@ export class Shape {
 			if (this.touchedByClick) state.statShapeKillsClick++;
 			if (this.touchedByTank) state.statShapeKillsTank++;
 			if (this.rarity >= 0) state.statRareKills++;
+			if (this.rarity === 0) state.statShinyKills++;
+			else if (this.rarity === 1) state.statLegendaryKills++;
+			else if (this.rarity === 2) state.statShadowKills++;
+			else if (this.rarity === 3) state.statRainbowKills++;
 			if (this.isGold) state.statGoldKills++;
 		}
 	}
@@ -326,7 +330,8 @@ export class Shape {
 			const screenScale = game.scale * game.room.fov;
 			const dx = mouse.x - this.pos.x * screenScale;
 			const dy = mouse.y - this.pos.y * screenScale;
-			const overlap = (mouse.leftClick ? 10 : 100) + this.size * screenScale - Math.sqrt(dx * dx + dy * dy);
+			const cursorR = (mouse.leftClick ? 10 : 100) * (state.cursorSizeMul ?? 1);
+			const overlap = cursorR + this.size * screenScale - Math.sqrt(dx * dx + dy * dy);
 			if (overlap > 0) {
 				if (mouse.leftClick) {
 					const baseDmg = (1 + (state.clickDamageUpgrades || 0)) * goldClickDamageMul();
