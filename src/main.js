@@ -692,20 +692,30 @@ function drawAchievementCrate(ctx, x, y, size, ach, unlocked, hovered) {
 	drawAchievementIcon(ctx, x + size / 2, y + size / 2, size, ach.icon, unlocked);
 }
 
-function drawAchievementTooltip(ctx, anchorX, anchorY, anchorW, ach, unlocked) {
+function drawAchievementTooltip(ctx, anchorX, anchorY, anchorW, ach, unlocked, progress = 1) {
 	const s = game.scale;
 	const w = 320 * s;
 	const h = 90 * s;
 	let x = anchorX + anchorW / 2 - w / 2;
 	x = Math.max(8 * s, Math.min(game.width - w - 8 * s, x));
-	let y = anchorY - h - 10 * s;
-	if (y < 10 * s) y = anchorY + (8 * s + (90 * s));   // flip below if no room above
+	// Tooltip floats UP out of the crate to a resting spot just above it.
+	// If there's no room above, flip below as a fallback.
+	let finalY = anchorY - h - 10 * s;
+	if (finalY < 10 * s) finalY = anchorY + anchorW + 10 * s;
+	// Animate from BEHIND the crate (start aligned with the crate's top edge)
+	// up to the resting spot — combined with the hovered-crate-on-top redraw
+	// in renderAchievements, the tooltip appears to slide out the top of the
+	// crate. Easing is 1-(1-p)^2 — quick start, gentle settle.
+	const eased = 1 - Math.pow(1 - progress, 2);
+	const startY = anchorY;
+	const y = startY + (finalY - startY) * eased;
 	const title = unlocked ? ach.title : "Unknown";
 	const desc = unlocked ? ach.desc : "You have not unlocked this yet!";
-	// Locked tooltips use the same red as the locked crate; unlocked use blue.
+	ctx.globalAlpha = eased;
 	drawCrateBackground(ctx, x, y, w, h, unlocked ? "blue" : "red", false);
 	drawText(ctx, title, x + w / 2, y + 24 * s, false, true, true, 24 * s);
 	drawText(ctx, desc, x + w / 2, y + 58 * s, false, true, true, 16 * s);
+	ctx.globalAlpha = 1;
 }
 
 function renderAchievements() {
@@ -718,6 +728,12 @@ function renderAchievements() {
 	const totalW = cols * crate + (cols - 1) * gap;
 	const xStart = (game.width - totalW) / 2;
 	const yStart = 180 * s;
+	// Compute hover + crate positions first, then render in three passes so the
+	// tooltip can sit visually BELOW the hovered crate (layered, not just
+	// positioned). Pass 1: every crate. Pass 2: tooltip (covers neighbour
+	// crates, but the hovered crate gets redrawn in Pass 3 on top of it, so
+	// the tooltip appears to emerge from under the crate as it slides down).
+	const slots = [];
 	let hovered = null;
 	for (let i = 0; i < ACHIEVEMENTS.length; i++) {
 		const ach = ACHIEVEMENTS[i];
@@ -727,10 +743,29 @@ function renderAchievements() {
 		const y = yStart + row * (crate + gap);
 		const unlocked = !!state.achievementsUnlocked[ach.id];
 		const isHover = mouse.x >= x && mouse.x <= x + crate && mouse.y >= y && mouse.y <= y + crate;
-		drawAchievementCrate(ctx, x, y, crate, ach, unlocked, isHover);
-		if (isHover) hovered = { ach, x, y, w: crate, unlocked };
+		const slot = { ach, x, y, unlocked, isHover };
+		slots.push(slot);
+		if (isHover) hovered = slot;
 	}
-	if (hovered) drawAchievementTooltip(ctx, hovered.x, hovered.y, hovered.w, hovered.ach, hovered.unlocked);
+	// Pass 1: all crates.
+	for (const slot of slots) {
+		drawAchievementCrate(ctx, slot.x, slot.y, crate, slot.ach, slot.unlocked, slot.isHover);
+	}
+	// Pass 2: tooltip behind the hovered crate.
+	if (hovered) {
+		const now = performance.now();
+		if (!game._achTooltipHover || game._achTooltipHover.achId !== hovered.ach.id) {
+			game._achTooltipHover = { achId: hovered.ach.id, startTime: now };
+		}
+		const elapsed = now - game._achTooltipHover.startTime;
+		const progress = Math.max(0, Math.min(1, elapsed / 500));
+		drawAchievementTooltip(ctx, hovered.x, hovered.y, crate, hovered.ach, hovered.unlocked, progress);
+		// Pass 3: redraw the hovered crate on top so the tooltip appears layered
+		// underneath it.
+		drawAchievementCrate(ctx, hovered.x, hovered.y, crate, hovered.ach, hovered.unlocked, true);
+	} else {
+		game._achTooltipHover = null;
+	}
 	// Summary at bottom: "N / Total unlocked"
 	const total = ACHIEVEMENTS.length;
 	const unlocked = ACHIEVEMENTS.reduce((n, a) => n + (state.achievementsUnlocked[a.id] ? 1 : 0), 0);
