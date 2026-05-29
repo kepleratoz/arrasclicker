@@ -6,7 +6,7 @@ import { Button } from "./button.js";
 import { Shape, TYPE_NAMES, TYPE_SIZES, TYPE_SIDES, makeShapeData } from "./shape.js";
 import { drawText } from "./render.js";
 import { tabs, generalTab } from "./tabs.js";
-import { encode, decode, saveToStorage, loadFromStorage, enableAutoSave, onBeforeSave } from "./save.js";
+import { encode, decode, saveToStorage, loadFromStorage, enableAutoSave, onBeforeSave, applyManualSave, downloadSave, pickSaveFile } from "./save.js";
 import { renderDebugPanel, updateDebug, shapeUnderMouse } from "./debug.js";
 import { syncTanks, tankUnderMouse, renderTankPreview, snapshotTanks, TANK_UPGRADE_SPECS, tankUpgradeCost, tankSkillPointsSpent, tankSkillPointsCap, tankSkillPointsRemaining } from "./tank.js";
 import { Siege } from "./siege.js";
@@ -336,13 +336,16 @@ game.resize();
 window.addEventListener("resize", () => game.resize());
 document.body.appendChild(game.canvas);
 
-const saveButton = new Button(() => prompt("Copy the save", encode()), "#3085db");
-const loadButton = new Button(() => {
-	const data = prompt("Load save");
+const saveButton = new Button(() => { downloadSave(); }, "#3085db");
+const loadButton = new Button(async () => {
+	// File picker only — no paste prompt. If the user cancels we just exit.
+	const data = await pickSaveFile();
 	if (!data) return;
 	try {
-		decode(data);
-		saveToStorage();
+		// applyManualSave writes the raw string into localStorage under the
+		// autosave key and reloads — the next boot reads it through the normal
+		// loadFromStorage path so live game state rebuilds cleanly.
+		applyManualSave(data);
 	} catch (e) {
 		console.error("Load failed:", e);
 		alert("Couldn't load that save — " + (e && e.message ? e.message : "data couldn't be parsed") + "\n\nTip: re-copy the full string and try again.");
@@ -599,7 +602,7 @@ function drawAchievementIcon(ctx, cx, cy, size, icon, unlocked) {
 	if (icon.kind === "cursor") {
 		ctx.fillStyle = "rgba(60,60,60,0.45)";
 		ctx.strokeStyle = "#222";
-		ctx.lineWidth = 3 * game.scale;
+		ctx.lineWidth = 3 * game.scale * game.room.fov;
 		ctx.beginPath();
 		ctx.arc(cx, cy, size * 0.32, 0, Math.PI * 2);
 		ctx.fill();
@@ -628,7 +631,7 @@ function drawGalleryShapeColored(ctx, cx, cy, maxR, type, tier, color) {
 	const sides = data.sides;
 	ctx.fillStyle = color;
 	ctx.strokeStyle = darken(color);
-	ctx.lineWidth = 3 * game.scale;
+	ctx.lineWidth = 3 * game.scale * game.room.fov;
 	ctx.lineJoin = "round";
 	const baseSides = Math.max(3, sides);
 	const cosFactor = Math.cos(Math.PI / baseSides);
@@ -990,7 +993,7 @@ function drawGalleryShape(ctx, cx, cy, maxR, type, tier, rarity) {
 	const cosFactor = Math.cos(Math.PI / baseSides);
 	ctx.fillStyle = fill;
 	ctx.strokeStyle = stroke;
-	ctx.lineWidth = 3 * game.scale;
+	ctx.lineWidth = 3 * game.scale * game.room.fov;
 	ctx.lineJoin = "round";
 	for (let i = 0; i < Math.max(1, tier); i++) {
 		const layerR = r * Math.pow(cosFactor, i);
@@ -1375,8 +1378,9 @@ function renderMapOverlay() {
 // G / O / E toggle their menus from anywhere.
 function handleHotkeys() {
 	if (game.mapOverlayOpen) return;
-	if (keys.justPressed.has("KeyS") && !game.openMenu) saveButton.callback();
-	if (keys.justPressed.has("KeyL") && !game.openMenu) loadButton.callback();
+	const altHeld = keys.pressed.has("AltLeft") || keys.pressed.has("AltRight");
+	if (altHeld && keys.justPressed.has("KeyS") && !game.openMenu) saveButton.callback();
+	if (altHeld && keys.justPressed.has("KeyL") && !game.openMenu) loadButton.callback();
 	if (keys.justPressed.has("KeyG")) {
 		game.openMenu = game.openMenu === "gallery" ? null : "gallery";
 		game.gallerySelected = null;
@@ -1406,6 +1410,18 @@ function frame(now) {
 		state.cursorSizeMul = Math.max(0.5, Math.min(1.5, (state.cursorSizeMul ?? 1) - mouse.wheelDelta * 0.001));
 		mouse.wheelDelta = 0;
 	}
+	// Settings / Gallery / Achievements: the simulation keeps ticking (so stats
+	// shown in Settings stay live), but no mouse-driven interactions can leak
+	// through to the game underneath. Save the mouse state, blank it for the
+	// game-side block, then restore for the menu UI to read.
+	const menuOpen = !!game.openMenu;
+	const savedGameClick = mouse.leftClick;
+	const savedGameRelease = mouse.leftRelease;
+	const savedGameRight = mouse.right;
+	const savedGameWheel = mouse.wheelDelta;
+	if (menuOpen) {
+		mouse.leftClick = false; mouse.leftRelease = false; mouse.right = false; mouse.wheelDelta = 0;
+	}
 	if (!overlayOpen) {
 		// Auto-spawn / despawn the Neutral Sanctuary. The gate lives in mapSwitch.js
 		// and is always-true on Crash Zone (so the user can find and repair it).
@@ -1428,6 +1444,12 @@ function frame(now) {
 		updateDebug();
 		handleTankClicks();
 		game.update();
+	}
+	if (menuOpen) {
+		mouse.leftClick = savedGameClick;
+		mouse.leftRelease = savedGameRelease;
+		mouse.right = savedGameRight;
+		mouse.wheelDelta = savedGameWheel;
 	}
 	if (trackClickThisFrame) {
 		if (game._clickHitShape) state.statShapeClicks++;

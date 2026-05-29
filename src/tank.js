@@ -1,4 +1,4 @@
-import { state } from "./state.js";
+import { state, playerScoreMul } from "./state.js";
 import { Vec2, formatNumber, lerpColor, REGEN_PER_FRAME, osaCurve, osaApply } from "./utils.js";
 import { game } from "./game.js";
 import { mouse, keys } from "./input.js";
@@ -487,7 +487,7 @@ export class Bullet {
 				if (shape.isGold) grantGoldEffect(shape.type);
 				else if (shape.isGem) grantGoldEffect(shape.type, gemEffectDurationMs());
 				shape.startDying();
-				const gained = Math.round(shape.score * goldScoreMul());
+				const gained = Math.round(shape.score * goldScoreMul() * playerScoreMul());
 				state.score += gained;
 				const sc = game.scale * game.room.fov;
 				game.flyingText.push({

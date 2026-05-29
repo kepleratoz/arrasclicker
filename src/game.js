@@ -482,6 +482,27 @@ class Game {
 			}
 		}
 
+		// Hidden name line above the score. Blank when unset, otherwise shows
+		// the player's chosen name in the same font as "Shapes X/Y". Clicking
+		// the area (whether named or not) opens a prompt to set/clear it.
+		const nameY = (120 - 48 / 2 - 18) * this.scale;
+		const nameFs = 24 * this.scale;
+		if (state.playerName) {
+			drawText(ctx, state.playerName, this.width / 2, nameY, false, true, true, nameFs);
+		}
+		// Hit strip: ~360px wide × 32px tall centered on nameY.
+		const stripW = 360 * this.scale;
+		const stripH = 32 * this.scale;
+		const stripX = (this.width - stripW) / 2;
+		const stripY = nameY - stripH / 2;
+		if (mouse.leftRelease &&
+			mouse.x >= stripX && mouse.x <= stripX + stripW &&
+			mouse.y >= stripY && mouse.y <= stripY + stripH) {
+			const next = prompt("Name?", state.playerName || "");
+			if (next != null) state.playerName = next.trim();
+			mouse.leftRelease = false;
+		}
+
 		drawText(ctx, "You have " + formatNumber(state.score) + " score", this.width / 2, 120 * this.scale, false, true, true, 48 * this.scale);
 		drawText(
 			ctx,

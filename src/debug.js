@@ -290,6 +290,7 @@ function applyEditionKey(sel, n) {
 }
 
 let debugVisible = false;
+export function isDebugUnlocked() { return debugVisible; }
 
 export function updateDebug() {
 	if (keys.justPressed.has("KeyF") && !game.debugMode) {

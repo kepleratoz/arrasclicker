@@ -70,6 +70,9 @@ export const state = {
 	cursorSizeMul: 1.0,
 	// Achievement unlocks — set of ids that have been earned. Persists in save.
 	achievementsUnlocked: {},
+	// Player name — set by clicking the hidden line above the score. Drives
+	// easter-egg buffs (see playerScoreMul / shouldSpawnSmol).
+	playerName: "",
 };
 
 // Fields that are unique to each map. Everything else (arenaFovUpgrades, shapesCap,
@@ -107,3 +110,12 @@ export function freshMapState() {
 }
 
 export const MAP_SCALES = [1, 5];
+
+// Easter-egg name buffs. Active only while the name matches — clearing or
+// changing the name removes the effect on the next eval.
+export function playerScoreMul() {
+	return state.playerName === "Big" ? 1.1 : 1;
+}
+export function isSmolNamed() {
+	return state.playerName === "Smol";
+}

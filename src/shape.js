@@ -1,4 +1,4 @@
-import { state } from "./state.js";
+import { state, playerScoreMul, isSmolNamed } from "./state.js";
 import { Vec2, darken, colors, formatNumber, REGEN_PER_FRAME, lerpColor, hslToHex } from "./utils.js";
 import { mouse } from "./input.js";
 import { drawPolygon, drawHealthBar } from "./render.js";
@@ -122,11 +122,13 @@ export class Shape {
 		// drop class. Sentries / Spawners override startDying entirely.).
 		if (!this.isGold) recordGalleryKill(this.type, this.layers, this.rarity);
 		if (this.isGem) this._spawnGemShards();
-		// Attribute the kill to whatever damage source(s) actually hit the
-		// shape. Untouched startDying (e.g. gold-shape natural decay) doesn't
-		// count as a kill.
+		// Total kills: count every shape death regardless of source — gold
+		// decay, untouched cleanup, anything — so the stat reflects "shapes
+		// removed from the arena" rather than "player-attributed kills".
+		state.statShapeKillsTotal++;
+		// The remaining counters still attribute to the damage source — they
+		// drive achievements / progression and shouldn't credit untouched deaths.
 		if (this.touchedByClick || this.touchedByTank) {
-			state.statShapeKillsTotal++;
 			if (this.touchedByClick) state.statShapeKillsClick++;
 			if (this.touchedByTank) state.statShapeKillsTank++;
 			if (this.rarity >= 0) state.statRareKills++;
@@ -189,6 +191,10 @@ export class Shape {
 			);
 			shape.setEvoTime();
 		}
+		// "Smol" easter egg: new shapes get 50% smaller hitbox AND appearance.
+		// Only applies at spawn — existing shapes keep their size, and shapes
+		// spawned after the name changes back to something else are normal.
+		if (isSmolNamed()) shape.size *= 0.5;
 		return shape;
 	}
 	// Convert this shape into a "gem": faceted multi-shade body, slightly
@@ -568,7 +574,7 @@ export class Shape {
 			if (this.isGold) grantGoldEffect(this.type);
 			else if (this.isGem) grantGoldEffect(this.type, gemEffectDurationMs());
 			this.startDying();
-			const gained = Math.round(this.score * goldScoreMul() * goldClickScoreMul());
+			const gained = Math.round(this.score * goldScoreMul() * goldClickScoreMul() * playerScoreMul());
 			state.score += gained;
 			const sc = game.scale * game.room.fov;
 			game.flyingText.push({
@@ -950,7 +956,7 @@ export class Sentry extends Shape {
 				this.damageBlend = 1;
 				if (this.health <= 0) {
 					this.startDying();   // sets this.score based on current state.score.
-					const gained = Math.round(this.score * goldScoreMul() * goldClickScoreMul());
+					const gained = Math.round(this.score * goldScoreMul() * goldClickScoreMul() * playerScoreMul());
 					state.score += gained;
 					game.flyingText.push({
 						x: this.pos.x * sScale,
