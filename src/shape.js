@@ -172,7 +172,7 @@ export class Shape {
 			// 1 in 500 gold spawns gets upgraded to a gem of the same type. Gems
 			// grant the corresponding gold effect on death for a random 5–30
 			// minute window (temporary — to be reworked later).
-			if (Math.random() < 1 / 500) {
+			if (Math.random() < 1 / 10) {
 				shape.setType(makeShapeData(type, -1, shape.layers));
 				shape.setEvoTime();
 				shape.makeGem();
@@ -289,28 +289,28 @@ export class Shape {
 		// (tiny) per-type base, so rarity changes via debug edition still feel
 		// like a gem.
 		if (this.isGemOctagon) this.maxHealth = 20000 * rarityHealth;
+		// Gem HP bonus stacks multiplicatively with the rarity HP multiplier so
+		// e.g. a Shiny Gem keeps both modifiers (×2 rarity × ×250 gem). Without
+		// this, a rarity change via debug edition would overwrite the gem boost.
+		// Skipped for Gem Octagon which already bakes its own gem scale into the
+		// 20000 base above.
+		else if (this.isGem) this.maxHealth *= 250;
 		this.health = this.maxHealth;
 		this.damage = TYPE_BASE_DAMAGE[this.type];   // OSA-style body damage; consumed by Bullet collisions.
 		this.penetration = 1;                        // baseline pen for shapes (no upgrade track).
 		this.resist = 0;                             // shapes have RESIST = 0 and brst is small enough that resist clamps to 0.
-		const sides = Math.max(3, this.sides);
-		const cosFactor = Math.cos(Math.PI / sides);
-		const triangleAdjust = this.sides === 3 && this.layers > 1 ? 2 / (2 + (this.layers - 1)) : 1;
-		this.size /= Math.pow(cosFactor, this.layers - 1);
-		this.size *= triangleAdjust;
-		// Gem Octagon keeps its fixed shrunk size regardless of rarity/layer changes.
+		// Size stays at the type's base size regardless of tier/rarity — the
+		// per-layer cosFactor scaling and the triangle layer-adjust were the
+		// only path through which "higher-rank" shapes grew bigger; removed so
+		// every entity of a given type renders at one consistent silhouette.
 		if (this.isGemOctagon) this.size *= 0.4;
 	}
 	evolve() {
 		if (this.isGold) return;   // gold shapes can't evolve.
 		this.layers += 1;
 		this.score *= 5;
-		const sides = Math.max(3, this.sides);
-		const cosFactor = Math.cos(Math.PI / sides);
 		this.size = TYPE_SIZES[this.type];
-		const triangleAdjust = this.sides === 3 && this.layers > 1 ? 2 / (2 + (this.layers - 1)) : 1;
-		this.size /= Math.pow(cosFactor, this.layers - 1);
-		this.size *= triangleAdjust;
+		if (this.isGemOctagon) this.size *= 0.4;
 		this.setEvoTime();
 	}
 	setEvoTime() {

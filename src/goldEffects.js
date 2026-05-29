@@ -29,9 +29,7 @@ export function grantGoldEffect(type, overrideMs) {
 	switch (type) {
 		case 0: addGoldEffect("score", "Score", 4, d); break;
 		// Golden Square: 30s flat cost-reduction (NOT affected by the gold-duration upgrade) unless overridden.
-		// Gem Square keeps the −50% cost reduction but uses half the gem
-		// duration (cost reduction is potent, so cap its uptime).
-		case 1: addGoldEffect("costReduction", "Cost Reduction", 0.5, d != null ? d / 2 : 30000); break;
+		case 1: addGoldEffect("costReduction", "Cost Reduction", 0.5, d); break;
 		case 2: addGoldEffect("clickDamage", "Click Damage", 7, d); addGoldEffect("clickScore", "Click Score", 7, d); break;
 		case 3: addGoldEffect("tankDamage", "Tank Damage", 2, d); addGoldEffect("tankReload", "Tank Reload", 1.5, d); break;
 		case 4: addGoldEffect("rareChance", "Rare Chance", 6, d); break;

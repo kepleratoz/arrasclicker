@@ -783,6 +783,23 @@ function renderAchievements() {
 		game.width / 2, game.height - 40 * s, false, true, true, 24 * s);
 }
 
+// Binary-search the longest prefix of `text` whose width (plus "...") fits in
+// `maxW` at `fontPx` Ubuntu — i.e. the canvas font drawText also uses. Returns
+// the unchanged text if it already fits.
+function truncateToWidth(ctx, text, fontPx, maxW) {
+	const prev = ctx.font;
+	ctx.font = fontPx + "px Ubuntu";
+	if (ctx.measureText(text).width <= maxW) { ctx.font = prev; return text; }
+	let lo = 0, hi = text.length;
+	while (lo < hi) {
+		const mid = (lo + hi + 1) >> 1;
+		if (ctx.measureText(text.slice(0, mid) + "...").width <= maxW) lo = mid;
+		else hi = mid - 1;
+	}
+	ctx.font = prev;
+	return text.slice(0, lo).trimEnd() + "...";
+}
+
 function renderAchievementToasts() {
 	const ctx = game.ctx;
 	const s = game.scale;
@@ -791,37 +808,49 @@ function renderAchievementToasts() {
 		if (now > game.achievementToasts[i].expiry) game.achievementToasts.splice(i, 1);
 	}
 	if (!game.achievementToasts.length) return;
-	const w = 340 * s;
-	const titleH = 80 * s;
-	const descH = 48 * s;
+	// Match the upgrade-button "tall" slot: title at y+8 (32px), description at
+	// y+38 (24px), total height 106 * s. The toast uses the same metrics so it
+	// reads as the same kind of button. A small icon box on the left, separated
+	// by a divider, carries the achievement-coloured background and icon.
+	const h = 106 * s;
+	const w = 360 * s;
+	const iconBoxW = 90 * s;
 	const right = game.width - 16 * s;
-	let y = 76 * s;
+	let y = 16 * s;
 	for (const t of game.achievementToasts) {
 		const ach = ACHIEVEMENTS.find((a) => a.id === t.achId);
 		if (!ach) continue;
 		const remaining = t.expiry - now;
 		const total = 4500;
 		const elapsed = total - remaining;
-		// Slide in from the right over the first 450ms with an ease-out cubic so
-		// the toast decelerates as it settles. Opacity ramps in over a longer
-		// 700ms window for the gradual fade-in the design calls for.
 		const slideT = Math.min(1, elapsed / 450);
 		const slideEased = 1 - Math.pow(1 - slideT, 3);
 		const fadeIn = Math.min(1, elapsed / 700);
 		const fadeOut = remaining < 600 ? remaining / 600 : 1;
-		const alpha = Math.min(fadeIn, fadeOut);
+		ctx.globalAlpha = Math.min(fadeIn, fadeOut);
 		const x = right - w + (1 - slideEased) * (w + 16 * s);
-		ctx.globalAlpha = alpha;
-		// Title row: button-styled background with the achievement icon + title.
-		drawCrateBackground(ctx, x, y, w, titleH, ach.crate, false);
-		drawAchievementIcon(ctx, x + 44 * s, y + titleH / 2, titleH * 0.7, ach.icon, true);
-		drawText(ctx, "Achievement unlocked!", x + 90 * s, y + 18 * s, false, true, false, 14 * s);
-		drawText(ctx, ach.title, x + 90 * s, y + 42 * s, false, true, false, 22 * s);
-		// Description row: attached directly to the bottom of the title button,
-		// styled the same so they read as one piece. Uses a neutral blue panel.
-		drawCrateBackground(ctx, x, y + titleH, w, descH, "blue", false);
-		drawText(ctx, ach.desc, x + w / 2, y + titleH + descH / 2 + 5 * s, false, true, true, 14 * s);
-		y += titleH + descH + 8 * s;
+		const inBounds = mouse.x >= x && mouse.x <= x + w && mouse.y >= y && mouse.y <= y + h;
+		const hovered = inBounds && !game.openMenu;
+		// Main panel (neutral blue) — body of the upgrade-style button.
+		drawCrateBackground(ctx, x, y, w, h, "blue", hovered);
+		// Left icon mini-box, achievement-coloured.
+		drawCrateBackground(ctx, x, y, iconBoxW, h, ach.crate, hovered);
+		drawAchievementIcon(ctx, x + iconBoxW / 2, y + h / 2, iconBoxW * 0.78, ach.icon, true);
+		// Divider line between mini-box and text column.
+		ctx.fillStyle = "#222";
+		ctx.fillRect(x + iconBoxW - 2 * s, y, 4 * s, h);
+		// Text: title (achievement name) at the upgrade-slot title slot, then the
+		// achievement description on the smaller description line.
+		const textX = x + iconBoxW + 10 * s;
+		const titleMaxW = x + w - 8 * s - textX;
+		const descMaxW = titleMaxW;
+		drawText(ctx, truncateToWidth(ctx, ach.title, 32 * s, titleMaxW), textX, y + 8 * s, false, true, false, 32 * s);
+		drawText(ctx, truncateToWidth(ctx, ach.desc, 24 * s, descMaxW), textX, y + 50 * s, false, true, false, 24 * s);
+		if (hovered && mouse.leftRelease) {
+			game.openMenu = "achievements";
+			mouse.leftRelease = false;
+		}
+		y += h + 14 * s;
 	}
 	ctx.globalAlpha = 1;
 }
@@ -1436,8 +1465,17 @@ function frame(now) {
 			const rarityLabel = hovered.rarity >= 0 ? rarityNames[hovered.rarity] + " " : "";
 			const yBase = game.height - 12 * s - lineH * 3;
 			const hpDisplay = " - " + Math.max(0, Math.floor(hovered.health)) + "/" + hovered.maxHealth;
-			const prefix = hovered.isGold ? "Golden " : hovered.isGem ? "Gem " : "";
-			const typeName = hovered.isSentry ? "Sentry" : prefix + TYPE_NAMES[hovered.type];
+			// Gem shapes use a gemstone naming convention. The leading rarity
+			// label ("Shiny ", "Legendary ", ...) still prepends, e.g.
+			// "Shiny Amethyst". Types without a gemstone alias fall back to
+			// "Gem <Polygon>" so debug-spawned Heptagon/Octagon/Nonagon gems
+			// still read sensibly.
+			const GEM_NAMES = ["Pearl", "Topaz", "Citrine", "Amethyst", "Aquamarine"];
+			let typeName;
+			if (hovered.isSentry) typeName = "Sentry";
+			else if (hovered.isGold) typeName = "Golden " + TYPE_NAMES[hovered.type];
+			else if (hovered.isGem) typeName = GEM_NAMES[hovered.type] ?? ("Gem " + TYPE_NAMES[hovered.type]);
+			else typeName = TYPE_NAMES[hovered.type];
 			// Rarity-themed fill for the main hover line; stroke stays default.
 			drawText(game.ctx, rarityLabel + typeName + hpDisplay, x, yBase, false, true, false, 28 * s, rarityTextFill(hovered.rarity, hovered.isGold, hovered.isGem));
 			if (!hovered.isSentry) drawText(game.ctx, "Tier " + hovered.layers, x, yBase + lineH, false, true, false, 24 * s);
