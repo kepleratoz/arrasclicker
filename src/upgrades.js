@@ -503,7 +503,9 @@ function wrapCostMethods(upgrade) {
 	for (const k of ["cost", "nextCost"]) {
 		if (typeof upgrade[k] !== "function" || upgrade[k]._goldWrapped) continue;
 		const orig = upgrade[k];
-		const wrapped = function () { return orig.call(this) * goldCostReductionMul(); };
+		// Round so cost-reduction multipliers (e.g. Golden / Gem Square's 0.5×) never
+		// leave fractional values that drag the player's score into decimals.
+		const wrapped = function () { return Math.round(orig.call(this) * goldCostReductionMul()); };
 		wrapped._goldWrapped = true;
 		upgrade[k] = wrapped;
 	}

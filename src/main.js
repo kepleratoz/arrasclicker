@@ -1499,6 +1499,7 @@ function frame(now) {
 			let typeName;
 			if (hovered.isSentry) typeName = "Sentry";
 			else if (hovered.isGold) typeName = "Golden " + TYPE_NAMES[hovered.type];
+			else if (hovered.isGemOctagon) typeName = "Diamond";
 			else if (hovered.isGem) typeName = GEM_NAMES[hovered.type] ?? ("Gem " + TYPE_NAMES[hovered.type]);
 			else typeName = TYPE_NAMES[hovered.type];
 			// Rarity-themed fill for the main hover line; stroke stays default.

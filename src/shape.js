@@ -248,10 +248,19 @@ export class Shape {
 		this.layers = 1;
 		this.setType(makeShapeData(6, -1, 1));   // type 6 = Octagon, size 112.
 		this.size *= 0.4;                        // smaller than a standard Octagon.
-		this.fillStyle = "#5cd970";              // poison click upgrade colour.
-		this.strokeStyle = darken("#5cd970");
+		// Diamond palette: nearly-white body with a cool-grey stroke. Combined
+		// with the higher-contrast facet shading below, faces read as a polished
+		// brilliant — bright highlights and visibly darker shadows on adjacent
+		// tiles.
+		this.fillStyle = "#eef2f7";
+		this.strokeStyle = "#6a7480";
 		this.makeGem();
 		this.isGemOctagon = true;
+		// Diamond facets: wider brightness swing, brighter centre, near-opaque
+		// so the white reads clean instead of muddying with the arena behind it.
+		this._gemContrast = 0.5;
+		this._gemMid = 1.22;
+		this._gemAlpha = 0.95;
 		this.maxHealth *= 0.5;
 		this.health = this.maxHealth;
 		// Never evolve — keep size and layers fixed regardless of rarity edits.

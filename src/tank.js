@@ -42,7 +42,7 @@ export const TANK_UPGRADE_SPECS = [
 	{ key: "atk",         label: "Body Damage",     max: 10, baseCost: 1e12, growth: 2,  color: "#e7896d" },
 	{ key: "speed",       label: "Move Speed",      max: 10, baseCost: 1e14, growth: 2,  color: "#3ca4cb" },
 ];
-export function tankUpgradeCost(spec, level) { return spec.baseCost * Math.pow(spec.growth, level) * goldCostReductionMul(); }
+export function tankUpgradeCost(spec, level) { return Math.round(spec.baseCost * Math.pow(spec.growth, level) * goldCostReductionMul()); }
 // Total skill points spent across every per-tank upgrade.
 export function tankSkillPointsSpent(tank) {
 	let n = 0;
