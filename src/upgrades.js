@@ -44,12 +44,43 @@ class ClickDamage {
 	getSecondary() { return formatNumber(this.cost()) + " score"; }
 	isDisabled() { return state.score < this.cost(); }
 }
-const CLICK_ABILITIES = {
-	lightning: { label: "Lightning",   cost: 3e19, color: "#f3e96b", ownedFlag: "lightningOwned" },
-};
-const CLICK_DESCRIPTIONS = {
-	lightning: "Every 3rd click chains lightning to nearby shapes.",
-};
+// Lightning is a 4-level upgrade with the same cost ladder as Poison. Each
+// level adds +10 % per-click chance to chain lightning to nearby shapes.
+const LIGHTNING_COSTS = [1e19, 2e19, 4e19, 8e19];
+class LightningUpgrade {
+	button = new Button(() => this.activate(), "#f3e96b");
+	tall = true;
+	level() { return state.lightningLevel || 0; }
+	isMaxed() { return this.level() >= LIGHTNING_COSTS.length; }
+	isEquipped() { return state.equippedClickUpgrade === "lightning"; }
+	nextCost() { return LIGHTNING_COSTS[this.level()] ?? Infinity; }
+	activate() {
+		if (!this.isMaxed()) {
+			const c = this.nextCost();
+			if (state.score < c) return;
+			state.score -= c;
+			state.lightningLevel = this.level() + 1;
+			state.lightningOwned = true;
+			if (state.lightningLevel === 1) state.equippedClickUpgrade = "lightning";
+			return;
+		}
+		state.equippedClickUpgrade = this.isEquipped() ? null : "lightning";
+	}
+	getLabel() {
+		const lvl = this.level();
+		const tag = lvl === 0 ? "" : this.isEquipped() ? " (EQUIPPED)" : " (owned)";
+		return "Lightning (" + lvl + "/" + LIGHTNING_COSTS.length + ")" + tag;
+	}
+	getDescription() {
+		const pct = 10 * Math.max(1, this.level());
+		return pct + "% chance per click to chain lightning to nearby shapes.";
+	}
+	getSecondary() {
+		if (this.isMaxed()) return this.isEquipped() ? "Click to unequip" : "Click to equip";
+		return formatNumber(this.nextCost()) + " score";
+	}
+	isDisabled() { return !this.isMaxed() && state.score < this.nextCost(); }
+}
 // Poison is a 4-level upgrade — each purchase grants one extra concurrent
 // poison stack per shape (level 1 = 1 stack, level 4 = 4 stacks).
 const POISON_COSTS = [1e19, 2e19, 4e19, 8e19];
@@ -127,42 +158,10 @@ class MidasUpgrade {
 	// No cost() method → the upgrade panel won't try to bulk-buy via simulateBuy.
 	isDisabled() { return !this.isMaxed() && state.score < this.nextCost(); }
 }
-class ClickAbility {
-	constructor(key) {
-		this.key = key;
-		const a = CLICK_ABILITIES[key];
-		this.button = new Button(() => this.activate(), a.color);
-		this.tall = true;   // upgrade panel renders this slot taller with a separate description row.
-	}
-	isOwned()    { return state[CLICK_ABILITIES[this.key].ownedFlag]; }
-	isEquipped() { return state.equippedClickUpgrade === this.key; }
-	activate() {
-		const a = CLICK_ABILITIES[this.key];
-		if (!this.isOwned()) {
-			if (state.score < a.cost) return;
-			state.score -= a.cost;
-			state[a.ownedFlag] = true;
-			state.equippedClickUpgrade = this.key;
-			return;
-		}
-		state.equippedClickUpgrade = this.isEquipped() ? null : this.key;
-	}
-	getLabel() {
-		const a = CLICK_ABILITIES[this.key];
-		const tag = !this.isOwned() ? "" : this.isEquipped() ? " (EQUIPPED)" : " (owned)";
-		return a.label + tag;
-	}
-	getDescription() { return CLICK_DESCRIPTIONS[this.key]; }
-	getSecondary() {
-		if (!this.isOwned()) return formatNumber(CLICK_ABILITIES[this.key].cost) + " score";
-		return this.isEquipped() ? "Click to unequip" : "Click to equip";
-	}
-	isDisabled() { return !this.isOwned() && state.score < CLICK_ABILITIES[this.key].cost; }
-}
 export const clickUpgrades = [
 	new ClickDamage(),
 	new PoisonUpgrade(),
-	new ClickAbility("lightning"),
+	new LightningUpgrade(),
 	new MidasUpgrade(),
 ];
 

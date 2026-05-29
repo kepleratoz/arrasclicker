@@ -88,6 +88,11 @@ export class Shape {
 		this.pos = pos;
 		this.angle = Math.random() * Math.PI * 2;
 		this.velocity = new Vec2();
+		// Latched at construction so the choice survives evolution: the size
+		// shrink applies through every later setType/evolve pass even if the
+		// name changes. Covers natural spawns, debug spawns, and the gem
+		// octagon path (all go through `new Shape(...)`).
+		this.smol = isSmolNamed();
 		this.fillStyle = "#000";
 		this.strokeStyle = "#000";
 		this.sides = 0;
@@ -191,10 +196,6 @@ export class Shape {
 			);
 			shape.setEvoTime();
 		}
-		// "Smol" easter egg: new shapes get 50% smaller hitbox AND appearance.
-		// Only applies at spawn — existing shapes keep their size, and shapes
-		// spawned after the name changes back to something else are normal.
-		if (isSmolNamed()) shape.size *= 0.5;
 		return shape;
 	}
 	// Convert this shape into a "gem": faceted multi-shade body, slightly
@@ -305,18 +306,29 @@ export class Shape {
 		this.damage = TYPE_BASE_DAMAGE[this.type];   // OSA-style body damage; consumed by Bullet collisions.
 		this.penetration = 1;                        // baseline pen for shapes (no upgrade track).
 		this.resist = 0;                             // shapes have RESIST = 0 and brst is small enough that resist clamps to 0.
-		// Size stays at the type's base size regardless of tier/rarity — the
-		// per-layer cosFactor scaling and the triangle layer-adjust were the
-		// only path through which "higher-rank" shapes grew bigger; removed so
-		// every entity of a given type renders at one consistent silhouette.
+		// Tiered shapes expand so the inner nested rings have room — same scaling
+		// the renderer assumes. Triangle layers > 1 get a small extra adjust to
+		// keep their proportions sensible.
+		const sides = Math.max(3, this.sides);
+		const cosFactor = Math.cos(Math.PI / sides);
+		const triangleAdjust = this.sides === 3 && this.layers > 1 ? 2 / (2 + (this.layers - 1)) : 1;
+		this.size /= Math.pow(cosFactor, this.layers - 1);
+		this.size *= triangleAdjust;
 		if (this.isGemOctagon) this.size *= 0.4;
+		if (this.smol) this.size *= 0.5;
 	}
 	evolve() {
 		if (this.isGold) return;   // gold shapes can't evolve.
 		this.layers += 1;
 		this.score *= 5;
+		const sides = Math.max(3, this.sides);
+		const cosFactor = Math.cos(Math.PI / sides);
 		this.size = TYPE_SIZES[this.type];
+		const triangleAdjust = this.sides === 3 && this.layers > 1 ? 2 / (2 + (this.layers - 1)) : 1;
+		this.size /= Math.pow(cosFactor, this.layers - 1);
+		this.size *= triangleAdjust;
 		if (this.isGemOctagon) this.size *= 0.4;
+		if (this.smol) this.size *= 0.5;
 		this.setEvoTime();
 	}
 	setEvoTime() {
@@ -408,8 +420,9 @@ export class Shape {
 					}
 					if (equipped === "lightning" && !game._lightningFiredThisFrame) {
 						game._lightningFiredThisFrame = true;
-						state.lightningClickCount = (state.lightningClickCount || 0) + 1;
-						if (state.lightningClickCount % 3 === 0) this._fireLightning(baseDmg);
+						// 10 % per level — level 1 = 10 %, level 4 = 40 %.
+						const lvl = state.lightningLevel || 0;
+						if (lvl > 0 && Math.random() < 0.1 * lvl) this._fireLightning(baseDmg);
 					}
 				} else {
 					const angle = Math.atan2(dy, dx);

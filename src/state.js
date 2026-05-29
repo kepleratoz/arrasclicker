@@ -15,6 +15,7 @@ export const state = {
 	tankCount: 0,
 	clickDamageUpgrades: 0,
 	lightningOwned: false,
+	lightningLevel: 0,        // 0 = not owned, 1..4 = each level adds 10% per-click chain chance.
 	poisonOwned: false,
 	poisonLevel: 0,           // 0 = not owned, 1..4 = each level lets +1 poison stack per shape.
 	midasOwned: false,
@@ -83,7 +84,7 @@ export const PER_MAP_FIELDS = [
 	"score", "clickDamageUpgrades", "tankCount",
 	"squareBuffUpgrades", "triangleBuffUpgrades", "pentagonBuffUpgrades", "hexagonBuffUpgrades",
 	"eggEvoTimeUpgrades", "squareEvoTimeUpgrades", "triangleEvoTimeUpgrades", "pentagonEvoTimeUpgrades", "hexagonEvoTimeUpgrades",
-	"lightningOwned", "poisonOwned", "poisonLevel", "midasOwned", "midasLevel", "equippedClickUpgrade", "lightningClickCount",
+	"lightningOwned", "lightningLevel", "poisonOwned", "poisonLevel", "midasOwned", "midasLevel", "equippedClickUpgrade", "lightningClickCount",
 	"tankRarityCap", "tankForceTypeCap", "tankForceRarityCap",
 	"shapeTypeBuff", "shapeEvoNerf", "layersBuff", "layersCaps", "rarityCap",
 	"squaresUnlocked", "trianglesUnlocked", "pentagonsUnlocked", "hexagonsUnlocked",
@@ -95,7 +96,7 @@ export function freshMapState() {
 		squareBuffUpgrades: 0, triangleBuffUpgrades: 0, pentagonBuffUpgrades: 0, hexagonBuffUpgrades: 0,
 		eggEvoTimeUpgrades: 0, squareEvoTimeUpgrades: 0, triangleEvoTimeUpgrades: 0,
 		pentagonEvoTimeUpgrades: 0, hexagonEvoTimeUpgrades: 0,
-		lightningOwned: false, poisonOwned: false, poisonLevel: 0, midasOwned: false, midasLevel: 0,
+		lightningOwned: false, lightningLevel: 0, poisonOwned: false, poisonLevel: 0, midasOwned: false, midasLevel: 0,
 		equippedClickUpgrade: null, lightningClickCount: 0,
 		tankRarityCap: 4, tankForceTypeCap: -1, tankForceRarityCap: -1,
 		shapeTypeBuff: 1,
@@ -111,11 +112,11 @@ export function freshMapState() {
 
 export const MAP_SCALES = [1, 5];
 
-// Easter-egg name buffs. Active only while the name matches — clearing or
-// changing the name removes the effect on the next eval.
+// Easter-egg name buffs. Trigger as long as the keyword appears anywhere in
+// the name (case-insensitive), so "MyBigName" or "smolBoi" still count.
 export function playerScoreMul() {
-	return state.playerName === "Big" ? 1.1 : 1;
+	return /big/i.test(state.playerName || "") ? 1.1 : 1;
 }
 export function isSmolNamed() {
-	return state.playerName === "Smol";
+	return /smol/i.test(state.playerName || "");
 }

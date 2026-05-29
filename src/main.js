@@ -326,6 +326,9 @@ loadFromStorage();
 // (1..4). Old saves get bumped to level 1 so they don't silently lose their
 // purchase.
 if (state.poisonOwned && !state.poisonLevel) state.poisonLevel = 1;
+// Same migration for Lightning — it used to be a single-purchase flag and is
+// now a 4-level upgrade. Old saves get bumped to level 1.
+if (state.lightningOwned && !state.lightningLevel) state.lightningLevel = 1;
 syncTanks();
 ensureCrashZoneSeeded();   // seed walls + neutral sentry if loading directly into Map 1.
 // Sanctuary no longer auto-spawns; toggle it via the debug panel.
