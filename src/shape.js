@@ -473,6 +473,14 @@ export class Shape {
 		ctx.globalAlpha = fade * visibilityAlpha;
 		if (ctx.globalAlpha <= 0) { ctx.globalAlpha = 1; return; }
 		if (this.isGem) { this._renderGem(ctx, sizeMul, fade); ctx.globalAlpha = 1; return; }
+		// Non-gem Shadow shapes borrow the gem multi-facet silhouette (visible
+		// spokes from centre to each vertex) but skip the per-facet colour
+		// shading — every facet shares the same uniform fill.
+		if (this.rarity === 2 && !this.isGold) {
+			this._renderShadowFaceted(ctx, sizeMul, fade, colorScale);
+			ctx.globalAlpha = 1;
+			return;
+		}
 		// Pulsing translucent aura behind gold shapes — the OSA portal-ring effect.
 		// OSA portalAura: ALPHA 0.4, SIZE oscillates 32↔45 by 1.2/tick on a SIZE-25 portal
 		// (≈1.28×→1.8× the source radius, ≈1.4 Hz). Drawn first so the shape sits on top.
@@ -655,6 +663,12 @@ export class Shape {
 			const eggCosFactor = 0.5;
 			for (let layer = 0; layer < this.layers; ++layer) {
 				const r = baseR * Math.pow(eggCosFactor, layer);
+				// Opaque circle underlay for the same anti-aliasing seam fix.
+				ctx.globalAlpha = fade;
+				ctx.fillStyle = darken(base, this._gemMid ?? 1.15);
+				ctx.beginPath();
+				ctx.arc(cx, cy, r, 0, Math.PI * 2);
+				ctx.fill();
 				for (let i = 0; i < facets; ++i) {
 					const a1 = this.angle + (i / facets) * Math.PI * 2;
 					const a2 = this.angle + ((i + 1) / facets) * Math.PI * 2;
@@ -690,6 +704,19 @@ export class Shape {
 				const a = layerAngle + (i / sides) * Math.PI * 2;
 				verts[i] = { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, a };
 			}
+			// Underlay: opaque polygon body at the mid shade. Anti-aliased seams
+			// between adjacent facet triangles end up showing this base layer
+			// instead of the arena behind the shape, so the thin white slivers
+			// disappear without strokes overhanging the polygon edge.
+			ctx.globalAlpha = fade;
+			ctx.fillStyle = darken(base, this._gemMid ?? 1.15);
+			ctx.beginPath();
+			for (let i = 0; i < sides; ++i) {
+				if (i === 0) ctx.moveTo(verts[i].x, verts[i].y);
+				else ctx.lineTo(verts[i].x, verts[i].y);
+			}
+			ctx.closePath();
+			ctx.fill();
 			// Per-face triangles, shaded — the gem "texture".
 			for (let i = 0; i < sides; ++i) {
 				const v1 = verts[i];
@@ -784,6 +811,13 @@ export class Shape {
 					{ x: x0, y: y0 }, { x: x1, y: y0 },
 					{ x: x1, y: y1 }, { x: x0, y: y1 },
 				];
+				// Per-tile opaque underlay at the tile's mid shade. Closes the
+				// anti-aliased seams between the 4 facet triangles without
+				// strokes that would bleed past the tile rect into neighbours.
+				ctx.globalAlpha = fade;
+				ctx.fillStyle = darken(baseColor, mid);
+				ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+				ctx.globalAlpha = alpha * fade;
 				for (let i = 0; i < 4; i++) {
 					const c1 = corners[i];
 					const c2 = corners[(i + 1) % 4];
@@ -815,6 +849,89 @@ export class Shape {
 		ctx.lineWidth = 3 * sc;
 		ctx.lineJoin = "round";
 		ctx.stroke(octPath);
+		ctx.restore();
+	}
+	// Render for non-gem Shadow shapes. Uses the shadow-gem colour palette,
+	// translucent fill + stroke, no facets, and clips every stroke to the
+	// outer polygon's interior so the outward half of each line can't form a
+	// halo — same containment idea the gem polygons use, just enforced by clip.
+	_renderShadowFaceted(ctx, sizeMul, fade, colorScale) {
+		const sc = game.scale * game.room.fov;
+		const cx = this.pos.x * sc;
+		const cy = this.pos.y * sc;
+		const baseR = this.drawSize * sizeMul * sc;
+		const base = darken("#3a3a3a", colorScale);
+		const stroke = darken("#0f0f0f", colorScale);
+		const bodyAlpha = 0.65 * fade;
+		const strokeAlpha = 0.75 * fade;
+		ctx.lineJoin = "round";
+		const isEgg = this.sides === 0;
+		if (isEgg) {
+			// Eggs: single body fill at the outer ring + per-layer concentric
+			// stroke. Strokes are clipped to the outer circle so the outermost
+			// stroke can't form a halo around the body.
+			const outerR = baseR;
+			ctx.globalAlpha = bodyAlpha;
+			ctx.fillStyle = base;
+			ctx.beginPath();
+			ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+			ctx.fill();
+			ctx.save();
+			ctx.beginPath();
+			ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+			ctx.clip();
+			ctx.globalAlpha = strokeAlpha;
+			ctx.strokeStyle = stroke;
+			for (let layer = 0; layer < this.layers; ++layer) {
+				const r = outerR * Math.pow(0.5, layer);
+				ctx.lineWidth = (layer === 0 ? 6 : 3) * sc;
+				ctx.beginPath();
+				ctx.arc(cx, cy, r, 0, Math.PI * 2);
+				ctx.stroke();
+			}
+			ctx.restore();
+			return;
+		}
+		const sides = Math.max(3, this.sides);
+		const cosFactor = Math.cos(Math.PI / sides);
+		// Build the outer polygon once — used as the body fill path AND as the
+		// stroke clip region.
+		const outerAngle = this.angle + Math.PI / sides;
+		const outerPath = new Path2D();
+		for (let i = 0; i < sides; ++i) {
+			const a = outerAngle + (i / sides) * Math.PI * 2;
+			const px = cx + Math.cos(a) * baseR;
+			const py = cy + Math.sin(a) * baseR;
+			if (i === 0) outerPath.moveTo(px, py);
+			else outerPath.lineTo(px, py);
+		}
+		outerPath.closePath();
+		ctx.globalAlpha = bodyAlpha;
+		ctx.fillStyle = base;
+		ctx.fill(outerPath);
+		// All strokes inside this save/clip — the outer stroke's outward half
+		// and any inner-stroke vertex bleed past the outer edge are hidden.
+		ctx.save();
+		ctx.clip(outerPath);
+		ctx.globalAlpha = strokeAlpha;
+		ctx.strokeStyle = stroke;
+		for (let layer = 0; layer < this.layers; ++layer) {
+			const r = baseR * Math.pow(cosFactor, layer);
+			const layerAngle = this.angle + (layer & 1 ? 0 : Math.PI / sides);
+			// Outer layer: doubled lineWidth — the clip eats the outward half so
+			// the visible thickness matches the inner strokes at ~3*sc.
+			ctx.lineWidth = (layer === 0 ? 6 : 3) * sc;
+			ctx.beginPath();
+			for (let i = 0; i < sides; ++i) {
+				const a = layerAngle + (i / sides) * Math.PI * 2;
+				const px = cx + Math.cos(a) * r;
+				const py = cy + Math.sin(a) * r;
+				if (i === 0) ctx.moveTo(px, py);
+				else ctx.lineTo(px, py);
+			}
+			ctx.closePath();
+			ctx.stroke();
+		}
 		ctx.restore();
 	}
 	_fireLightning(damage) {

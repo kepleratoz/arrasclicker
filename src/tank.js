@@ -79,7 +79,9 @@ export function tankCanTarget(shape) {
 	//   • Force-type cap (`state.tankForceTypeCap`, -1 = off): unconditionally allows
 	//     any shape up to that type, overriding the rarity gate.
 	if ((state.tankForceTypeCap ?? -1) >= 0 && shape.type <= state.tankForceTypeCap) return true;
-	if ((state.tankForceRarityCap ?? -1) >= 0 && shape.rarity === state.tankForceRarityCap) return true;
+	// Force-target tier: any shape whose tier (layers) has reached the chosen
+	// threshold gets auto-targeted regardless of the rarity cap.
+	if ((state.tankForceTierCap ?? -1) >= 1 && (shape.layers ?? 1) >= state.tankForceTierCap) return true;
 	return shape.rarity < state.tankRarityCap - 1;
 }
 function tankCanLockOn(shape) { return tankCanTarget(shape) && shape.rarity !== 4; }
@@ -746,21 +748,22 @@ export class Tank {
 	// `claimCounts` is a Map<shape, number> of how many tanks already target each shape.
 	// Up to MAX_TANKS_PER_TARGET tanks may share one mob.
 	findNearest(claimCounts) {
-		// User-set priority target (shift-click) is *excluded* from active
-		// targeting — tanks don't lock onto it. Bullets still damage it on
-		// incidental collision (see the bullet-collision loop). Clears if it
-		// dies or leaves game.shapes.
+		// Shift-click priority target overrides EVERY targeting filter — the
+		// rarity cap, force-type cap, gem/gold/ethereal lock-on exclusions,
+		// claim caps, and any current target. Returned unconditionally so the
+		// tank detaches from whatever it was already chasing on the next tick.
+		// Clears itself if the priority dies or leaves game.shapes.
 		const priority = game.priorityTarget;
-		if (priority && (!game.shapes.includes(priority) || (priority.isDead && priority.isDead()))) {
-			game.priorityTarget = null;
+		if (priority && game.shapes.includes(priority) && !(priority.isDead && priority.isDead())) {
+			return priority;
 		}
+		if (priority) game.priorityTarget = null;
 		// Mobs (Sentries / Sentry Sanctuaries) take priority over polygons. We
 		// pick the nearest mob if any are available; otherwise fall back to the
 		// nearest polygon. Lock-on / claim caps apply to both pools.
 		let bestMob = null, bestMobD = Infinity;
 		let bestShape = null, bestShapeD = Infinity;
 		for (const sh of game.shapes) {
-			if (sh === game.priorityTarget) continue;
 			if (sh.isDead() || !tankCanLockOn(sh)) continue;
 			const isMob = sh.isSentry || sh.isSentrySpawner;
 			// Mobs allow unlimited concurrent attackers; polygons still respect the cap.

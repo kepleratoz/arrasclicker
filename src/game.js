@@ -477,8 +477,11 @@ class Game {
 				ctx.strokeStyle = "#222";
 				ctx.fillStyle = colors.square;
 				const txt = parts.join(", ");
-				ctx.strokeText(txt, this.width / 2, 74 * this.scale);
-				ctx.fillText(txt, this.width / 2, 74 * this.scale);
+				// Shift up when a player name is shown so the name line below
+				// doesn't overlap the gold effects strip.
+				const goldY = (state.playerName ? 44 : 74) * this.scale;
+				ctx.strokeText(txt, this.width / 2, goldY);
+				ctx.fillText(txt, this.width / 2, goldY);
 			}
 		}
 

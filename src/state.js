@@ -24,7 +24,8 @@ export const state = {
 	lightningClickCount: 0,       // every 3rd click triggers the chain.
 	tankRarityCap: 4,
 	tankForceTypeCap: -1,        // -1 = off; 0..4 = always-target Egg..Hexagon regardless of rarity.
-	tankForceRarityCap: -1,      // -1 = off; 0..4 = always-target Shiny..Ethereal of any type.
+	tankForceRarityCap: -1,      // legacy: replaced by tankForceTierCap. Kept so old saves don't drop the field.
+	tankForceTierCap: -1,        // -1 = off; 1..6 = auto-target any shape whose tier (layers) ≥ this.
 	tankFilterOrder: [0, 1, 2],  // display order of the targeting filters in the Tank tab.
 	goldEffectExtensionUpgrades: 0,   // 0..3 → +0/+20/+40/+60s to gold-effect duration.
 	tanks: [],
@@ -85,7 +86,7 @@ export const PER_MAP_FIELDS = [
 	"squareBuffUpgrades", "triangleBuffUpgrades", "pentagonBuffUpgrades", "hexagonBuffUpgrades",
 	"eggEvoTimeUpgrades", "squareEvoTimeUpgrades", "triangleEvoTimeUpgrades", "pentagonEvoTimeUpgrades", "hexagonEvoTimeUpgrades",
 	"lightningOwned", "lightningLevel", "poisonOwned", "poisonLevel", "midasOwned", "midasLevel", "equippedClickUpgrade", "lightningClickCount",
-	"tankRarityCap", "tankForceTypeCap", "tankForceRarityCap",
+	"tankRarityCap", "tankForceTypeCap", "tankForceRarityCap", "tankForceTierCap",
 	"shapeTypeBuff", "shapeEvoNerf", "layersBuff", "layersCaps", "rarityCap",
 	"squaresUnlocked", "trianglesUnlocked", "pentagonsUnlocked", "hexagonsUnlocked",
 ];
@@ -98,7 +99,7 @@ export function freshMapState() {
 		pentagonEvoTimeUpgrades: 0, hexagonEvoTimeUpgrades: 0,
 		lightningOwned: false, lightningLevel: 0, poisonOwned: false, poisonLevel: 0, midasOwned: false, midasLevel: 0,
 		equippedClickUpgrade: null, lightningClickCount: 0,
-		tankRarityCap: 4, tankForceTypeCap: -1, tankForceRarityCap: -1,
+		tankRarityCap: 4, tankForceTypeCap: -1, tankForceRarityCap: -1, tankForceTierCap: -1,
 		shapeTypeBuff: 1,
 		shapeEvoNerf: { 0: 1, 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1 },
 		layersBuff: 0,

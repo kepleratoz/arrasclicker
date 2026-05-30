@@ -4,6 +4,9 @@ import { colors, formatNumber, darken } from "./utils.js";
 import { shapeTypeFromBuff, shapeRarityFromBuff } from "./shape.js";
 import { syncTanks } from "./tank.js";
 import { goldCostReductionMul } from "./goldEffects.js";
+import { keys } from "./input.js";
+
+function shiftHeld() { return keys.pressed.has("ShiftLeft") || keys.pressed.has("ShiftRight"); }
 
 const RARITY_TIER_NAMES = ["Normal", "Shiny", "Legendary", "Shadow", "Rainbow"];
 const RARITY_TIER_COLORS = ["#bbbbbb", colors.shiny, colors.legendary, colors.shadow, RAINBOW];
@@ -55,16 +58,20 @@ class LightningUpgrade {
 	isEquipped() { return state.equippedClickUpgrade === "lightning"; }
 	nextCost() { return LIGHTNING_COSTS[this.level()] ?? Infinity; }
 	activate() {
-		if (!this.isMaxed()) {
-			const c = this.nextCost();
-			if (state.score < c) return;
-			state.score -= c;
-			state.lightningLevel = this.level() + 1;
-			state.lightningOwned = true;
-			if (state.lightningLevel === 1) state.equippedClickUpgrade = "lightning";
+		// Shift+click toggles equip/unequip (only if owned). Plain click buys
+		// the next level if affordable; once maxed a plain click does nothing.
+		if (shiftHeld()) {
+			if (this.level() <= 0) return;
+			state.equippedClickUpgrade = this.isEquipped() ? null : "lightning";
 			return;
 		}
-		state.equippedClickUpgrade = this.isEquipped() ? null : "lightning";
+		if (this.isMaxed()) return;
+		const c = this.nextCost();
+		if (state.score < c) return;
+		state.score -= c;
+		state.lightningLevel = this.level() + 1;
+		state.lightningOwned = true;
+		if (state.lightningLevel === 1) state.equippedClickUpgrade = "lightning";
 	}
 	getLabel() {
 		const lvl = this.level();
@@ -73,13 +80,13 @@ class LightningUpgrade {
 	}
 	getDescription() {
 		const pct = 10 * Math.max(1, this.level());
-		return pct + "% chance per click to chain lightning to nearby shapes.";
+		return pct + "% chance per click to chain lightning. Shift+click to equip/unequip.";
 	}
 	getSecondary() {
-		if (this.isMaxed()) return this.isEquipped() ? "Click to unequip" : "Click to equip";
+		if (this.isMaxed()) return this.isEquipped() ? "Shift+click to unequip" : "Shift+click to equip";
 		return formatNumber(this.nextCost()) + " score";
 	}
-	isDisabled() { return !this.isMaxed() && state.score < this.nextCost(); }
+	isDisabled() { return !this.isMaxed() && state.score < this.nextCost() && !shiftHeld(); }
 }
 // Poison is a 4-level upgrade — each purchase grants one extra concurrent
 // poison stack per shape (level 1 = 1 stack, level 4 = 4 stacks).
@@ -92,16 +99,18 @@ class PoisonUpgrade {
 	isEquipped() { return state.equippedClickUpgrade === "poison"; }
 	nextCost() { return POISON_COSTS[this.level()] ?? Infinity; }
 	activate() {
-		if (!this.isMaxed()) {
-			const c = this.nextCost();
-			if (state.score < c) return;
-			state.score -= c;
-			state.poisonLevel = this.level() + 1;
-			state.poisonOwned = true;
-			if (state.poisonLevel === 1) state.equippedClickUpgrade = "poison";
+		if (shiftHeld()) {
+			if (this.level() <= 0) return;
+			state.equippedClickUpgrade = this.isEquipped() ? null : "poison";
 			return;
 		}
-		state.equippedClickUpgrade = this.isEquipped() ? null : "poison";
+		if (this.isMaxed()) return;
+		const c = this.nextCost();
+		if (state.score < c) return;
+		state.score -= c;
+		state.poisonLevel = this.level() + 1;
+		state.poisonOwned = true;
+		if (state.poisonLevel === 1) state.equippedClickUpgrade = "poison";
 	}
 	getLabel() {
 		const lvl = this.level();
@@ -110,13 +119,13 @@ class PoisonUpgrade {
 	}
 	getDescription() {
 		const stacks = Math.max(1, this.level());
-		return "Clicked shapes take 25% click damage / sec for 10s. Stacks up to " + stacks + "× per shape.";
+		return "Clicked shapes take 25% click damage / sec for 10s. Stacks up to " + stacks + "× per shape. Shift+click to equip/unequip.";
 	}
 	getSecondary() {
-		if (this.isMaxed()) return this.isEquipped() ? "Click to unequip" : "Click to equip";
+		if (this.isMaxed()) return this.isEquipped() ? "Shift+click to unequip" : "Shift+click to equip";
 		return formatNumber(this.nextCost()) + " score";
 	}
-	isDisabled() { return !this.isMaxed() && state.score < this.nextCost(); }
+	isDisabled() { return !this.isMaxed() && state.score < this.nextCost() && !shiftHeld(); }
 }
 // Midas Touch is a 5-level upgrade — the initial purchase counts as the first
 // of the 5. Each level doubles the previous level's cost (1e19, 2e19, 4e19,
@@ -131,16 +140,18 @@ class MidasUpgrade {
 	isEquipped() { return state.equippedClickUpgrade === "midas"; }
 	nextCost() { return MIDAS_COSTS[this.level()] ?? Infinity; }
 	activate() {
-		if (!this.isMaxed()) {
-			const c = this.nextCost();
-			if (state.score < c) return;
-			state.score -= c;
-			state.midasLevel = this.level() + 1;
-			state.midasOwned = true;
-			if (state.midasLevel === 1) state.equippedClickUpgrade = "midas";
+		if (shiftHeld()) {
+			if (this.level() <= 0) return;
+			state.equippedClickUpgrade = this.isEquipped() ? null : "midas";
 			return;
 		}
-		state.equippedClickUpgrade = this.isEquipped() ? null : "midas";
+		if (this.isMaxed()) return;
+		const c = this.nextCost();
+		if (state.score < c) return;
+		state.score -= c;
+		state.midasLevel = this.level() + 1;
+		state.midasOwned = true;
+		if (state.midasLevel === 1) state.equippedClickUpgrade = "midas";
 	}
 	getLabel() {
 		const lvl = this.level();
@@ -149,14 +160,14 @@ class MidasUpgrade {
 	}
 	getDescription() {
 		const pct = (0.1 * this.level()).toFixed(1);
-		return pct + "% chance per click to convert into a random gold shape.";
+		return pct + "% chance per click to convert into a random gold shape. Shift+click to equip/unequip.";
 	}
 	getSecondary() {
-		if (this.isMaxed()) return this.isEquipped() ? "Click to unequip" : "Click to equip";
+		if (this.isMaxed()) return this.isEquipped() ? "Shift+click to unequip" : "Shift+click to equip";
 		return formatNumber(this.nextCost()) + " score";
 	}
 	// No cost() method → the upgrade panel won't try to bulk-buy via simulateBuy.
-	isDisabled() { return !this.isMaxed() && state.score < this.nextCost(); }
+	isDisabled() { return !this.isMaxed() && state.score < this.nextCost() && !shiftHeld(); }
 }
 export const clickUpgrades = [
 	new ClickDamage(),
@@ -454,26 +465,29 @@ class TankForceType {
 	getSecondary() { return ""; }
 	isDisabled() { return false; }
 }
-// Force-target by rarity. Slider index 0 = Off; 1..5 maps to state.tankForceRarityCap 0..4.
-const FORCE_RARITY_NAMES = ["Off", ...RARITY_TIER_NAMES];
-const FORCE_RARITY_COLORS = ["#bbbbbb", ...RARITY_TIER_COLORS];
-class TankForceRarity {
+// Force-target by tier. Slider index 0 = Off; 1..6 maps to tier threshold 1..6.
+// When set, any shape whose layers (tier) ≥ the threshold gets auto-targeted
+// no matter what the rarity cap says — effectively "kill anything once it
+// reaches tier N".
+const FORCE_TIER_NAMES = ["Off", "T1", "T2", "T3", "T4", "T5", "T6"];
+const FORCE_TIER_COLORS = ["#bbbbbb", "#7f8a99", "#5cd970", "#3ca4cb", "#8d6adf", "#cc669c", "#efc74b"];
+class TankForceTier {
 	button = new SliderButton(
-		FORCE_RARITY_NAMES,
-		() => (state.tankForceRarityCap ?? -1) + 1,
-		(idx) => { state.tankForceRarityCap = idx - 1; },
+		FORCE_TIER_NAMES,
+		() => Math.max(0, state.tankForceTierCap ?? -1),
+		(idx) => { state.tankForceTierCap = idx === 0 ? -1 : idx; },
 		TANK_COLOR,
-		FORCE_RARITY_COLORS,
+		FORCE_TIER_COLORS,
 	);
 	getLabel() {
-		const cap = state.tankForceRarityCap ?? -1;
-		if (cap < 0) return "Force-Target Rarity: Off";
-		return "Force-Target Rarity: " + RARITY_TIER_NAMES[cap] + " (always targets shapes of this rarity)";
+		const cap = state.tankForceTierCap ?? -1;
+		if (cap < 1) return "Force-Target Tier: Off";
+		return "Force-Target Tier: T" + cap + " (auto-kills any shape that reaches this tier)";
 	}
 	getSecondary() { return ""; }
 	isDisabled() { return false; }
 }
-export const tankUpgrades = [new TankRarityCap(), new TankForceType(), new TankForceRarity()];
+export const tankUpgrades = [new TankRarityCap(), new TankForceType(), new TankForceTier()];
 
 class UnlockShadow {
 	button = new Button(() => { state.score -= this.cost(); state.rarityCap = Math.max(state.rarityCap, 2); }, SHADOW_BUTTON_COLOR);
