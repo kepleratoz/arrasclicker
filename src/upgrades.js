@@ -43,13 +43,13 @@ export const eggUpgrades = [new EggEvolution(), new EggEvoTime(), new UnlockSqua
 class ClickDamage {
 	button = new Button(() => { state.score -= this.cost(); state.clickDamageUpgrades += 1; }, "#3085db");
 	getLabel() { return "+1 Click Damage (now " + (1 + state.clickDamageUpgrades) + " per click)"; }
-	cost() { return 100 * Math.pow(100, state.clickDamageUpgrades); }
+	cost() { return 10 * Math.pow(100, state.clickDamageUpgrades); }
 	getSecondary() { return formatNumber(this.cost()) + " score"; }
 	isDisabled() { return state.score < this.cost(); }
 }
 // Lightning is a 4-level upgrade with the same cost ladder as Poison. Each
 // level adds +10 % per-click chance to chain lightning to nearby shapes.
-const LIGHTNING_COSTS = [1e19, 2e19, 4e19, 8e19];
+const LIGHTNING_COSTS = [3e18, 6e18, 12e18, 24e18];
 class LightningUpgrade {
 	button = new Button(() => this.activate(), "#f3e96b");
 	tall = true;
@@ -90,7 +90,7 @@ class LightningUpgrade {
 }
 // Poison is a 4-level upgrade — each purchase grants one extra concurrent
 // poison stack per shape (level 1 = 1 stack, level 4 = 4 stacks).
-const POISON_COSTS = [1e19, 2e19, 4e19, 8e19];
+const POISON_COSTS = [1e18, 2e18, 4e18, 8e18];
 class PoisonUpgrade {
 	button = new Button(() => this.activate(), "#5cd970");
 	tall = true;
@@ -131,7 +131,7 @@ class PoisonUpgrade {
 // of the 5. Each level doubles the previous level's cost (1e19, 2e19, 4e19,
 // 8e19, 16e19). Each level adds +0.1% per-click chance to replace the clicked
 // shape with a random gold shape.
-const MIDAS_COSTS = [1e19, 2e19, 4e19, 8e19, 16e19];
+const MIDAS_COSTS = [5e18, 10e18, 20e18, 40e18, 80e18];
 class MidasUpgrade {
 	button = new Button(() => this.activate(), "#d4af37");
 	tall = true;   // upgrade panel renders this slot taller with a separate description row.
@@ -220,7 +220,7 @@ class ExtendGoldenDuration {
 	level() { return state.goldEffectExtensionUpgrades || 0; }
 	getLabel() { return "+20s Golden Shape Effect Duration (" + this.level() + "/3, base 60s)"; }
 	max() { return this.level() >= 3; }
-	cost() { return [1e17, 1e19, 1e21][this.level()] ?? Infinity; }
+	cost() { return this.level() >= 3 ? Infinity : 1e17 * Math.pow(5, this.level()); }
 	getSecondary() { return this.max() ? "MAX" : formatNumber(this.cost()) + " score"; }
 	isDisabled() { return this.max() || state.score < this.cost(); }
 }
@@ -378,14 +378,15 @@ class PentagonBuff {
 class UnlockHexagons {
 	button = new Button(() => { state.hexagonsUnlocked = true; }, colors.hexagon);
 	getLabel() { return "Unlock Hexagon Upgrades"; }
-	// Buff > 3120 is one spawn bucket past pentagons (shapeTypeFromBuff > 5).
-	// Pentagons must already be unlocked too, since the only way to push the
-	// buff that high is the pentagon-tab buffs / pentagon unlock boost.
-	requirement() { return state.pentagonsUnlocked && shapeTypeFromBuff(state.shapeTypeBuff) > 5; }
+	// Gated on spawn-bucket coverage, same shape as the other unlocks but
+	// using a fractional threshold so the gate clears after ~6 pentagon-tab
+	// chance upgrades from the post-pentagon baseline (6200 × 1.14^6 ≈ 13608,
+	// 5 buffs only ≈ 11937, so 6 is the smallest count that clears).
+	requirement() { return state.pentagonsUnlocked && shapeTypeFromBuff(state.shapeTypeBuff) > 5.9; }
 	getSecondary() {
 		if (state.hexagonsUnlocked) return "UNLOCKED";
 		if (!state.pentagonsUnlocked) return "Unlock pentagons first";
-		const needed = Math.pow(5, 5) - 5;   // 3120 — one spawn bucket past pentagon.
+		const needed = Math.pow(5, 5.9) - 5;   // ≈ 13292
 		return "Spawn chance: " + formatNumber(Math.floor(state.shapeTypeBuff)) + " / " + formatNumber(needed) + " needed";
 	}
 	isDisabled() { return state.hexagonsUnlocked || !this.requirement(); }
@@ -418,7 +419,7 @@ class HexagonBuff {
 class UnlockRainbow {
 	button = new Button(() => { state.score -= this.cost(); state.rarityCap = Math.max(state.rarityCap, 3); }, RAINBOW);
 	getLabel() { return "Unlock Rainbow Rarity"; }
-	cost() { return 1e18; }
+	cost() { return 1e17; }
 	// Roll condition: rarity buff must be high enough that rainbow can actually roll.
 	requirement() { return state.rarityCap >= 2 && shapeRarityFromBuff(state.shapeRarityBuff) > 5; }
 	getSecondary() {

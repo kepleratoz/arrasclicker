@@ -390,16 +390,11 @@ export class Shape {
 		this.damageBlend *= 0.85;
 		if (this.damageBlend < 0.01) this.damageBlend = 0;
 		this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
-		if (this.poisons && this.poisons.length > 0 && !this.dying) {
-			const now = performance.now();
-			let totalDps = 0;
-			for (let i = this.poisons.length - 1; i >= 0; --i) {
-				if (this.poisons[i].endTime <= now) this.poisons.splice(i, 1);
-				else totalDps += this.poisons[i].dps;
-			}
-			if (totalDps > 0) this._applyHit(totalDps / 60);
-		}
-		if ((mouse.leftClick || mouse.right) && !game.debugMode && !game.controlledTank) {
+		this._tickPoisons();
+		// Right-click repel is gated by a settings toggle. Default is on; users
+		// can disable it without losing the left-click damage path.
+		const rightActive = mouse.right && (state.rightClickRepelEnabled !== false);
+		if ((mouse.leftClick || rightActive) && !game.debugMode && !game.controlledTank) {
 			const screenScale = game.scale * game.room.fov;
 			const dx = mouse.x - this.pos.x * screenScale;
 			const dy = mouse.y - this.pos.y * screenScale;
@@ -934,6 +929,95 @@ export class Shape {
 		}
 		ctx.restore();
 	}
+	// Render this entity's "body polygon" using the gem facet style — same
+	// underlay + per-face shaded triangles + outline trio the standard gem
+	// path uses, but parameterised so mobs (Sentry / Spawner) can paint their
+	// triangle body the same way when they've been gemmed via debug. Caller
+	// passes the polygon vertices already in screen space, plus the centre
+	// point the facet fans radiate from.
+	_renderGemBody(ctx, cx, cy, verts, fade, strokeWidth) {
+		const sides = verts.length;
+		const phase = this._gemPhase || 0;
+		const contrast = this._gemContrast ?? 0.3;
+		const mid = this._gemMid ?? 1.15;
+		const alpha = this._gemAlpha ?? 0.7;
+		const base = this.fillStyle;
+		const stroke = this.strokeStyle;
+		const sectorShade = (a) => Math.max(1.0, Math.min(1.5, mid - contrast * Math.sin(a + phase)));
+		// Opaque underlay so anti-aliased seams between facets read as the mid
+		// shade rather than the arena behind.
+		ctx.globalAlpha = fade;
+		ctx.fillStyle = darken(base, mid);
+		ctx.beginPath();
+		for (let i = 0; i < sides; ++i) {
+			if (i === 0) ctx.moveTo(verts[i].x, verts[i].y);
+			else ctx.lineTo(verts[i].x, verts[i].y);
+		}
+		ctx.closePath();
+		ctx.fill();
+		// Shaded facet triangles.
+		for (let i = 0; i < sides; ++i) {
+			const v1 = verts[i];
+			const v2 = verts[(i + 1) % sides];
+			const midAngle = Math.atan2((v1.y + v2.y) / 2 - cy, (v1.x + v2.x) / 2 - cx);
+			ctx.globalAlpha = alpha * fade;
+			ctx.fillStyle = darken(base, sectorShade(midAngle));
+			ctx.beginPath();
+			ctx.moveTo(cx, cy);
+			ctx.lineTo(v1.x, v1.y);
+			ctx.lineTo(v2.x, v2.y);
+			ctx.closePath();
+			ctx.fill();
+		}
+		// Outline.
+		ctx.globalAlpha = (alpha + 0.2) * fade;
+		ctx.strokeStyle = stroke;
+		ctx.lineWidth = strokeWidth;
+		ctx.lineJoin = "round";
+		ctx.beginPath();
+		for (let i = 0; i < sides; ++i) {
+			if (i === 0) ctx.moveTo(verts[i].x, verts[i].y);
+			else ctx.lineTo(verts[i].x, verts[i].y);
+		}
+		ctx.closePath();
+		ctx.stroke();
+		ctx.globalAlpha = fade;
+	}
+	// Tick this entity's active poison stacks once per frame. Total damage is
+	// the sum of all stacks' dps, divided by 60 to convert "per second" → "per
+	// frame". Expired stacks are dropped in-place.
+	_tickPoisons() {
+		if (!this.poisons || this.poisons.length === 0 || this.dying) return;
+		const now = performance.now();
+		let totalDps = 0;
+		for (let i = this.poisons.length - 1; i >= 0; --i) {
+			if (this.poisons[i].endTime <= now) this.poisons.splice(i, 1);
+			else totalDps += this.poisons[i].dps;
+		}
+		if (totalDps > 0) this._applyHit(totalDps / 60);
+	}
+	// Apply the equipped click-upgrade side effects (poison stack / lightning
+	// chain) to a mob that was just clicked. Poison dps and the lightning seed
+	// damage are both fed the *mob-scale* damage (10 % of the full click value),
+	// so every form of click damage that touches a mob is reduced by 90 %.
+	_mobClickEffects(baseDmg) {
+		const equipped = state.equippedClickUpgrade;
+		const mobDmg = baseDmg * 0.1;
+		if (equipped === "poison" && !this.dying) {
+			const maxStacks = state.poisonLevel || 1;
+			if (!this.poisons) this.poisons = [];
+			const newPoison = { endTime: performance.now() + 10000, dps: mobDmg * 0.25 };
+			if (this.poisons.length >= maxStacks) this.poisons.shift();
+			this.poisons.push(newPoison);
+		}
+		if (equipped === "lightning" && !game._lightningFiredThisFrame) {
+			game._lightningFiredThisFrame = true;
+			const lvl = state.lightningLevel || 0;
+			// The lightning seed carries the FULL baseDmg — _fireLightning
+			// applies the 0.1× per-hop reduction to any mob in the chain.
+			if (lvl > 0 && Math.random() < 0.1 * lvl) this._fireLightning(baseDmg);
+		}
+	}
 	_fireLightning(damage) {
 		const MAX_CHAIN = 6;
 		const MAX_HOP_SQ = 250 * 250;
@@ -954,9 +1038,13 @@ export class Shape {
 			if (!best) break;
 			visited.add(best);
 			points.push({ x: best.pos.x, y: best.pos.y });
-			best._applyHit(damage);
+			// Mobs in the chain take 10 % of the chain's damage value (90 %
+			// click-damage reduction applied uniformly to lightning hops).
+			const isMob = best.isSentry || best.isSentrySpawner;
+			const dmg = isMob ? damage * 0.1 : damage;
+			best._applyHit(dmg);
 			best.touchedByClick = true;
-			state.statClickDamageDealt += damage;
+			state.statClickDamageDealt += dmg;
 			current = best;
 		}
 		if (points.length >= 2) game.lightningBolts.push({ points, life: 18, maxLife: 18 });
@@ -1052,7 +1140,12 @@ export class Sentry extends Shape {
 	startDying() {
 		if (this.dying) return;
 		// A killed sentry pays out 5% of the player's current score, capped at e18.
-		if (!this.neutral) this.score = Math.min(state.score * 0.05, 1e18);
+		if (!this.neutral) {
+			this.score = Math.min(state.score * 0.05, 1e18);
+			// Gemmed sentries (debug only) carry the same score multiplier the
+			// gem polygons get on top of their normal payout.
+			if (this.isGem) this.score *= this._gemScoreBoost();
+		}
 		this.dying = state.shapeDeathAnimEnabled ? 1 : DEATH_FRAMES + 1;
 	}
 	takeDamage(n) {
@@ -1083,16 +1176,24 @@ export class Sentry extends Shape {
 		this.damageBlend *= 0.85;
 		if (this.damageBlend < 0.01) this.damageBlend = 0;
 		this.drawSize = this.drawSize * 0.95 + this.size * 0.05;
-		// Click damage (left-click on the body), matching Shape behavior.
-		if (mouse.leftClick && !game.debugMode && !game.controlledTank) {
+		this._tickPoisons();
+		// Click damage (left-click on the body). Mobs eat only 10 % of the
+		// player's click damage — see the _mobClickEffects helper for poison /
+		// lightning at the same scale.
+		if (mouse.leftClick && !game.debugMode && !game.controlledTank && !this.dying) {
 			const sScale = game.scale * game.room.fov;
 			const dx = mouse.x - this.pos.x * sScale;
 			const dy = mouse.y - this.pos.y * sScale;
 			const overlap = 10 + this.size * sScale - Math.sqrt(dx * dx + dy * dy);
 			if (overlap > 0) {
-				// Sentries take 20% of click damage (they're not pure "click fodder" like shapes).
-				this.health -= (1 + (state.clickDamageUpgrades || 0)) * goldClickDamageMul() * 0.2;
+				const baseDmg = (1 + (state.clickDamageUpgrades || 0)) * goldClickDamageMul();
+				const mobDmg = baseDmg * 0.1;
+				this.health -= mobDmg;
+				state.statClickDamageDealt += mobDmg;
+				this.touchedByClick = true;
 				this.damageBlend = 1;
+				game._clickHitShape = true;
+				this._mobClickEffects(baseDmg);
 				if (this.health <= 0) {
 					this.startDying();   // sets this.score based on current state.score.
 					const gained = Math.round(this.score * goldScoreMul() * goldClickScoreMul() * playerScoreMul());
@@ -1184,26 +1285,32 @@ export class Sentry extends Shape {
 		// Bullets first (under the body).
 		for (const b of this.bullets) b.render(ctx);
 		ctx.globalAlpha = fade;
-		// Triangle body, with OSA-style red hit-flash if recently damaged.
+		// Triangle body, with OSA-style red hit-flash if recently damaged. When
+		// gemmed (via debug edition key 8) the body swaps to the gem facet
+		// style while the turret / barrels / bullets keep their normal look.
 		const blend = state.damageBlendEnabled ? (this.damageBlend ?? 0) * 0.5 : 0;
-		ctx.fillStyle = blend > 0 ? lerpColor(this.fillStyle, "#ff5050", blend) : this.fillStyle;
-		ctx.strokeStyle = blend > 0 ? lerpColor(this.strokeStyle, "#7a1a1a", blend) : this.strokeStyle;
-		ctx.lineWidth = 4 * sc;
-		ctx.lineJoin = "round";
-		ctx.beginPath();
 		const r = this.drawSize * sizeMul * sc;
+		const verts = new Array(3);
 		for (let i = 0; i < 3; i++) {
-			// Vertex 0 is the "forward" tip; rotates with this.angle so the body points
-			// in the direction the sentry is moving.
 			const a = this.angle + (i / 3) * Math.PI * 2;
-			const x = cx + Math.cos(a) * r;
-			const y = cy + Math.sin(a) * r;
-			if (i === 0) ctx.moveTo(x, y);
-			else ctx.lineTo(x, y);
+			verts[i] = { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r };
 		}
-		ctx.closePath();
-		ctx.fill();
-		ctx.stroke();
+		if (this.isGem) {
+			this._renderGemBody(ctx, cx, cy, verts, fade, 4 * sc);
+		} else {
+			ctx.fillStyle = blend > 0 ? lerpColor(this.fillStyle, "#ff5050", blend) : this.fillStyle;
+			ctx.strokeStyle = blend > 0 ? lerpColor(this.strokeStyle, "#7a1a1a", blend) : this.strokeStyle;
+			ctx.lineWidth = 4 * sc;
+			ctx.lineJoin = "round";
+			ctx.beginPath();
+			for (let i = 0; i < 3; i++) {
+				if (i === 0) ctx.moveTo(verts[i].x, verts[i].y);
+				else ctx.lineTo(verts[i].x, verts[i].y);
+			}
+			ctx.closePath();
+			ctx.fill();
+			ctx.stroke();
+		}
 		// Auto cannon: barrel + small turret body. Barrel/width are sized relative to the
 		// turret-body radius (Basic-tank style), not the whole sentry — keeps proportions sane.
 		const turretR = SENTRY_TURRET_BODY * this.size * sc;
@@ -1326,6 +1433,7 @@ export class SentrySpawner extends Shape {
 		if (this.dying) return;
 		// A killed spawner pays out 100% of the player's current score, capped at e20.
 		this.score = Math.min(state.score, 1e20);
+		if (this.isGem) this.score *= this._gemScoreBoost();
 		this.dying = state.shapeDeathAnimEnabled ? 1 : DEATH_FRAMES + 1;
 	}
 	takeDamage(n) {
@@ -1342,6 +1450,36 @@ export class SentrySpawner extends Shape {
 		}
 		this.angle += SS_SPIN_RATE;
 		if (this.health < this.maxHealth) this.health = Math.min(this.maxHealth, this.health + SS_REGEN);
+		this._tickPoisons();
+		// Click damage — same 10 %-of-click-damage rule sentries use, plus the
+		// poison / lightning side-effect helper.
+		if (mouse.leftClick && !game.debugMode && !game.controlledTank && !this.dying) {
+			const sScale = game.scale * game.room.fov;
+			const dx = mouse.x - this.pos.x * sScale;
+			const dy = mouse.y - this.pos.y * sScale;
+			const overlap = 10 + this.size * sScale - Math.sqrt(dx * dx + dy * dy);
+			if (overlap > 0) {
+				const baseDmg = (1 + (state.clickDamageUpgrades || 0)) * goldClickDamageMul();
+				const mobDmg = baseDmg * 0.1;
+				this.health -= mobDmg;
+				state.statClickDamageDealt += mobDmg;
+				this.touchedByClick = true;
+				this.damageBlend = 1;
+				game._clickHitShape = true;
+				this._mobClickEffects(baseDmg);
+				if (this.health <= 0) {
+					this.startDying();
+					const gained = Math.round(this.score * goldScoreMul() * goldClickScoreMul() * playerScoreMul());
+					state.score += gained;
+					game.flyingText.push({
+						x: this.pos.x * sScale,
+						y: this.pos.y * sScale,
+						alpha: 1,
+						text: "+" + formatNumber(gained),
+					});
+				}
+			}
+		}
 		// Slow orbit around the nearest (non-neutral) sanctuary, mirroring Sentry's
 		// behaviour but at a wider radius and a slower base speed.
 		let home = null;
@@ -1489,23 +1627,30 @@ export class SentrySpawner extends Shape {
 			ctx.stroke();
 			ctx.restore();
 		}
-		// Triangle body with red flash on damage.
+		// Triangle body with red flash on damage. Gem swap via debug — same
+		// faceted body the gem polygons / sentries use when isGem is set.
 		const blend = state.damageBlendEnabled ? this.damageBlend * 0.5 : 0;
-		ctx.fillStyle = blend > 0 ? lerpColor(this.fillStyle, "#ff5050", blend) : this.fillStyle;
-		ctx.strokeStyle = blend > 0 ? lerpColor(this.strokeStyle, "#7a1a1a", blend) : this.strokeStyle;
-		ctx.lineWidth = lw;
-		ctx.lineJoin = "round";
-		ctx.beginPath();
+		const ssVerts = new Array(3);
 		for (let i = 0; i < 3; i++) {
 			const a = this.angle + (i / 3) * Math.PI * 2;
-			const x = cx + Math.cos(a) * r;
-			const y = cy + Math.sin(a) * r;
-			if (i === 0) ctx.moveTo(x, y);
-			else ctx.lineTo(x, y);
+			ssVerts[i] = { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r };
 		}
-		ctx.closePath();
-		ctx.fill();
-		ctx.stroke();
+		if (this.isGem) {
+			this._renderGemBody(ctx, cx, cy, ssVerts, fade, lw);
+		} else {
+			ctx.fillStyle = blend > 0 ? lerpColor(this.fillStyle, "#ff5050", blend) : this.fillStyle;
+			ctx.strokeStyle = blend > 0 ? lerpColor(this.strokeStyle, "#7a1a1a", blend) : this.strokeStyle;
+			ctx.lineWidth = lw;
+			ctx.lineJoin = "round";
+			ctx.beginPath();
+			for (let i = 0; i < 3; i++) {
+				if (i === 0) ctx.moveTo(ssVerts[i].x, ssVerts[i].y);
+				else ctx.lineTo(ssVerts[i].x, ssVerts[i].y);
+			}
+			ctx.closePath();
+			ctx.fill();
+			ctx.stroke();
+		}
 
 		if (SS_HEALER_ENABLED) {
 		// Heal-bullets render under the turret so the turret stays on top.

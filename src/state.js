@@ -70,6 +70,8 @@ export const state = {
 	statUpgradesBought: 0,
 	// UI prefs — saved so the cursor size persists across sessions.
 	cursorSizeMul: 1.0,
+	cursorSizeScalingEnabled: true,    // false ⇒ scroll-wheel cursor resize is ignored.
+	rightClickRepelEnabled: true,      // false ⇒ holding right-click no longer pushes shapes away.
 	// Achievement unlocks — set of ids that have been earned. Persists in save.
 	achievementsUnlocked: {},
 	// Player name — set by clicking the hidden line above the score. Drives

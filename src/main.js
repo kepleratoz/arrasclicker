@@ -357,6 +357,8 @@ const loadButton = new Button(async () => {
 const shapeAnimButton = new Button(() => { state.shapeDeathAnimEnabled = !state.shapeDeathAnimEnabled; }, "#efc74b");
 const bulletAnimButton = new Button(() => { state.bulletDeathAnimEnabled = !state.bulletDeathAnimEnabled; }, "#58b0d0");
 const damageBlendButton = new Button(() => { state.damageBlendEnabled = !state.damageBlendEnabled; }, "#e03e41");
+const cursorScaleButton = new Button(() => { state.cursorSizeScalingEnabled = !state.cursorSizeScalingEnabled; }, "#8d6adf");
+const rightRepelButton = new Button(() => { state.rightClickRepelEnabled = !state.rightClickRepelEnabled; }, "#5cd970");
 
 let nextSpawnTime = 0;
 let lastFrameTime = 0;
@@ -542,8 +544,8 @@ const ACHIEVEMENTS = [
 	{ id: "score_hexagon",  title: "Hexagon",  desc: "Reach 1e18 score.",                   icon: { type: 4 }, crate: "blue", check: () => highestScoreAcrossMaps() >= 1e18 },
 	// Click counts.
 	{ id: "click_1", title: "Click I",   desc: "Click a shape 1,000 times.",   icon: { kind: "cursor" }, crate: "click_blue",                check: () => (state.statShapeClicks || 0) >= 1000 },
-	{ id: "click_2", title: "Click II",  desc: "Click a shape 10,000 times.",  icon: { kind: "cursor" }, crate: { split: ["click_blue", "shiny"] },     check: () => (state.statShapeClicks || 0) >= 10000 },
-	{ id: "click_3", title: "Click III", desc: "Click a shape 100,000 times.", icon: { kind: "cursor" }, crate: { split: ["click_blue", "legendary"] }, check: () => (state.statShapeClicks || 0) >= 100000 },
+	{ id: "click_2", title: "Click II",  desc: "Click a shape 5,000 times.",   icon: { kind: "cursor" }, crate: { split: ["click_blue", "shiny"] },     check: () => (state.statShapeClicks || 0) >= 5000 },
+	{ id: "click_3", title: "Click III", desc: "Click a shape 25,000 times.",  icon: { kind: "cursor" }, crate: { split: ["click_blue", "legendary"] }, check: () => (state.statShapeClicks || 0) >= 25000 },
 	// Rarity hunters.
 	{ id: "shiny_1", title: "Shiny Hunter I",   desc: "Kill 1,000 Shiny shapes.",   icon: { type: 0, rarity: 0 }, crate: "shiny", check: () => (state.statShinyKills || 0) >= 1000 },
 	{ id: "shiny_2", title: "Shiny Hunter II",  desc: "Kill 5,000 Shiny shapes.",   icon: { type: 1, rarity: 0 }, crate: "shiny", check: () => (state.statShinyKills || 0) >= 5000 },
@@ -946,6 +948,10 @@ function renderOpenMenu() {
 		bulletAnimButton.render(ctx, x, y, w, h, "Bullet FX: " + (state.bulletDeathAnimEnabled ? "ON" : "OFF"), false);
 		y += h + gap;
 		damageBlendButton.render(ctx, x, y, w, h, "Damage FX: " + (state.damageBlendEnabled ? "ON" : "OFF"), false);
+		y += h + gap;
+		cursorScaleButton.render(ctx, x, y, w, h, "Cursor Resize: " + (state.cursorSizeScalingEnabled ? "ON" : "OFF"), false);
+		y += h + gap;
+		rightRepelButton.render(ctx, x, y, w, h, "Right-Click Repel: " + (state.rightClickRepelEnabled ? "ON" : "OFF"), false);
 		y += h + gap + 8 * s;
 		renderSettingsStats(ctx, s, y);
 	} else if (game.openMenu === "gallery") {
@@ -991,6 +997,12 @@ function drawGalleryShape(ctx, cx, cy, maxR, type, tier, rarity) {
 		const hue = (Date.now() * 0.1) % 360;
 		fill = `hsl(${hue}, 80%, 60%)`;
 		stroke = `hsl(${hue}, 60%, 35%)`;
+	} else if (rarity === 2) {
+		// Shadow's global colour is translucent (alpha 0x20) which collapses to
+		// near-invisible against the dark gallery panel. Match the shadow-gem
+		// render's opaque palette so the icon stays readable.
+		fill = "#3a3a3a";
+		stroke = "#0f0f0f";
 	}
 	const baseSides = Math.max(3, sides);
 	const cosFactor = Math.cos(Math.PI / baseSides);
@@ -1049,6 +1061,10 @@ function renderGallery() {
 				ctx.fillStyle = "rgba(255,255,255,0.12)";
 				ctx.fillRect(x, y, slotW, rowH);
 			}
+			// Base score above the preview — formula-only, no buffs / multipliers
+			// (so the number stays a clean reference rather than a moving target).
+			const baseScore = makeShapeData(type, -1, tier).score;
+			drawText(ctx, formatNumber(baseScore) + " score", cx, cy - slotR - 18 * s, false, true, true, 18 * s);
 			drawGalleryShape(ctx, cx, cy, slotR, type, tier, -1);
 			drawText(ctx, "Tier " + tier, cx, y + rowH - 22 * s, false, true, true, 18 * s);
 			if (hovered && mouse.leftRelease) {
@@ -1091,6 +1107,8 @@ function renderGalleryDetail() {
 	for (const rarity of rarities) {
 		const cx = x + slotW / 2;
 		const cy = y + 80 * s;
+		const baseScore = makeShapeData(type, rarity, tier).score;
+		drawText(ctx, formatNumber(baseScore) + " score", cx, cy - slotR - 18 * s, false, true, true, 18 * s);
 		drawGalleryShape(ctx, cx, cy, slotR, type, tier, rarity);
 		const label = RARITY_DISPLAY[rarity] ?? "?";
 		drawText(ctx, label, cx, y + 170 * s, false, true, true, 22 * s);
@@ -1409,7 +1427,7 @@ function frame(now) {
 	// Wheel over the arena (left half) adjusts the cursor size, clamped to
 	// 0.5..1.5× the default. Wheel inside the upgrade panel still feeds the
 	// upgrade scroll logic in game.render.
-	if (mouse.wheelDelta !== 0 && !overlayOpen && !game.openMenu && mouse.x < game.width / 2) {
+	if (mouse.wheelDelta !== 0 && !overlayOpen && !game.openMenu && mouse.x < game.width / 2 && (state.cursorSizeScalingEnabled !== false)) {
 		state.cursorSizeMul = Math.max(0.5, Math.min(1.5, (state.cursorSizeMul ?? 1) - mouse.wheelDelta * 0.001));
 		mouse.wheelDelta = 0;
 	}
