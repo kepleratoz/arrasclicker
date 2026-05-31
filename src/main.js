@@ -1,4 +1,4 @@
-import { state } from "./state.js";
+import { state, isDyingLightName, anyEasterEggActive } from "./state.js";
 import { mouse, keys } from "./input.js";
 import { game } from "./game.js";
 import { Room } from "./room.js";
@@ -563,6 +563,9 @@ const ACHIEVEMENTS = [
 	{ id: "gold_1", title: "Gold Hunter I",  desc: "Kill 3 Gold shapes.",   icon: { type: 0, gold: true }, crate: "gold", check: () => (state.statGoldKills || 0) >= 3 },
 	{ id: "gold_2", title: "Gold Miner II",  desc: "Kill 10 Gold shapes.",  icon: { type: 1, gold: true }, crate: "gold", check: () => (state.statGoldKills || 0) >= 10 },
 	{ id: "gold_3", title: "Gold Expert III", desc: "Kill 30 Gold shapes.", icon: { type: 2, gold: true }, crate: "gold", check: () => (state.statGoldKills || 0) >= 30 },
+	// Hidden easter-egg achievement — crate stays "red" and icon renders as "?"
+	// even after unlock so the gallery entry still reads as undiscovered.
+	{ id: "name_easter", title: "What's in a name", desc: "Find a special name.", icon: { kind: "hidden" }, crate: "red", check: () => anyEasterEggActive() },
 ];
 
 function crateColorOf(name) {
@@ -593,7 +596,10 @@ function checkAchievements() {
 }
 
 function drawAchievementIcon(ctx, cx, cy, size, icon, unlocked) {
-	if (!unlocked) {
+	// Locked icons render as a `?`. The "hidden" icon kind keeps that look
+	// even after the achievement unlocks — used for easter-egg achievements
+	// that should stay visually mysterious in the gallery.
+	if (!unlocked || (icon && icon.kind === "hidden")) {
 		ctx.font = "bold " + (size * 0.7) + "px Ubuntu";
 		ctx.textAlign = "center";
 		ctx.textBaseline = "middle";
@@ -1413,6 +1419,11 @@ function handleHotkeys() {
 	if (keys.justPressed.has("KeyE")) {
 		game.openMenu = game.openMenu === "settings" ? null : "settings";
 		game.gallerySelected = null;
+	}
+	// "DyingLight" easter egg: pressing Q seeds a 500 ms red flash across every
+	// shape (Shape.render reads the timestamp and tints accordingly).
+	if (keys.justPressed.has("KeyQ") && isDyingLightName()) {
+		game._dyingLightFlash = performance.now();
 	}
 }
 

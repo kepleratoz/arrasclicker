@@ -22,6 +22,15 @@ function eligibleGoldTypes() {
 
 const LOG5 = Math.log(5);
 const DEATH_FRAMES = 18; // ~300ms at 60fps
+// 0..1 intensity of the DyingLight Q flash. Linear decay over 500 ms from the
+// timestamp the player last pressed Q (set by main.js's hotkey handler).
+function dyingLightFlashIntensity() {
+	const start = game._dyingLightFlash || 0;
+	if (!start) return 0;
+	const elapsed = performance.now() - start;
+	if (elapsed >= 500) return 0;
+	return 1 - elapsed / 500;
+}
 
 export function shapeTypeFromBuff(buff) {
 	return Math.log(5 + buff) / LOG5;
@@ -286,7 +295,9 @@ export class Shape {
 		this.fillStyle = data.color;
 		this.strokeStyle = darken(data.color);
 		this.sides = data.sides;
-		this.size = data.size;
+		// Mobs keep their own size — TYPE_SIZES is tuned for polygons and would
+		// shrink a sentry / spawner dramatically on every rarity edit.
+		if (!this.isSentry && !this.isSentrySpawner) this.size = data.size;
 		this.score = data.score;
 		this.type = data.type;
 		this.rarity = data.rarity ?? -1;
@@ -294,6 +305,12 @@ export class Shape {
 		// multiplier, with a 1000× floor for common gems. So Common Gem = ×1000,
 		// Shiny Gem = ×1000 (10 × 100), Legendary Gem = ×10000, etc.
 		if (this.isGem) this.score *= this._gemScoreBoost();
+		// Mobs also keep their own HP / damage from their constructors. The
+		// per-type TYPE_BASE_HEALTH would gut a sentry every time rarity edits
+		// reran setType. Visual fields (fillStyle/strokeStyle/rarity) above are
+		// still updated, so rarity colors and the rainbow/shadow render branches
+		// still apply.
+		if (this.isSentry || this.isSentrySpawner) return;
 		const rarityHealth = this.rarity === ETHEREAL ? 3
 			: this.rarity === 3 ? 8
 			: this.rarity === 2 ? 6
@@ -466,13 +483,29 @@ export class Shape {
 			visibilityAlpha = Math.max(0, 1 - d / (ETHEREAL_VISIBLE_DIST * game.scale));
 		}
 		ctx.globalAlpha = fade * visibilityAlpha;
-		if (ctx.globalAlpha <= 0) { ctx.globalAlpha = 1; return; }
-		if (this.isGem) { this._renderGem(ctx, sizeMul, fade); ctx.globalAlpha = 1; return; }
+		const flashI = dyingLightFlashIntensity();
+		if (ctx.globalAlpha <= 0) {
+			// Invisible shape: skip the body, but the flash still draws at full
+			// intensity so every shape pulses red during a DyingLight Q press.
+			if (flashI > 0) {
+				ctx.globalAlpha = 1;
+				this._drawFlashOverlay(ctx, sizeMul, fade, flashI);
+			}
+			ctx.globalAlpha = 1;
+			return;
+		}
+		if (this.isGem) {
+			this._renderGem(ctx, sizeMul, fade);
+			this._drawFlashOverlay(ctx, sizeMul, fade, flashI);
+			ctx.globalAlpha = 1;
+			return;
+		}
 		// Non-gem Shadow shapes borrow the gem multi-facet silhouette (visible
 		// spokes from centre to each vertex) but skip the per-facet colour
 		// shading — every facet shares the same uniform fill.
 		if (this.rarity === 2 && !this.isGold) {
 			this._renderShadowFaceted(ctx, sizeMul, fade, colorScale);
+			this._drawFlashOverlay(ctx, sizeMul, fade, flashI);
 			ctx.globalAlpha = 1;
 			return;
 		}
@@ -576,6 +609,7 @@ export class Shape {
 			}
 		}
 		if (tiered) ctx.restore();
+		this._drawFlashOverlay(ctx, sizeMul, fade, flashI);
 		ctx.globalAlpha = 1;
 	}
 	collide(other) {
@@ -929,6 +963,69 @@ export class Shape {
 		}
 		ctx.restore();
 	}
+	// DyingLight flash overlay — red translucent polygon (outer fill + every
+	// tier outline) drawn on top of whatever the shape just rendered. Always
+	// fires at full intensity × fade regardless of the body's own opacity, so
+	// even gem / shadow / invisible shapes get a uniform red pulse.
+	_drawFlashOverlay(ctx, sizeMul, fade, intensity) {
+		if (intensity <= 0) return;
+		const sc = game.scale * game.room.fov;
+		const cx = this.pos.x * sc;
+		const cy = this.pos.y * sc;
+		const baseR = this.drawSize * sizeMul * sc;
+		ctx.save();
+		ctx.globalAlpha = intensity * fade;
+		ctx.lineWidth = 3 * sc;
+		ctx.lineJoin = "round";
+		ctx.fillStyle = "#e6373d";
+		ctx.strokeStyle = "#7a1c20";
+		if (this.sides === 0) {
+			// Eggs: nested circles, halve per tier (same shrink the egg render
+			// uses). Only the outer layer fills, every layer strokes — matches
+			// how tiered shapes show their inner concentric rings.
+			for (let layer = 0; layer < this.layers; ++layer) {
+				const r = baseR * Math.pow(0.5, layer);
+				ctx.beginPath();
+				ctx.arc(cx, cy, r, 0, Math.PI * 2);
+				if (layer === 0) ctx.fill();
+				ctx.stroke();
+			}
+		} else {
+			const sides = Math.max(3, this.sides);
+			const cosFactor = Math.cos(Math.PI / sides);
+			for (let layer = 0; layer < this.layers; ++layer) {
+				const r = baseR * Math.pow(cosFactor, layer);
+				const layerAngle = this.angle + (layer & 1 ? 0 : Math.PI / sides);
+				ctx.beginPath();
+				for (let j = 0; j < sides; ++j) {
+					const a = layerAngle + (j / sides) * Math.PI * 2;
+					const x = cx + Math.cos(a) * r;
+					const y = cy + Math.sin(a) * r;
+					if (j === 0) ctx.moveTo(x, y);
+					else ctx.lineTo(x, y);
+				}
+				ctx.closePath();
+				if (layer === 0) ctx.fill();
+				ctx.stroke();
+			}
+		}
+		ctx.restore();
+	}
+	// True when this entity's body will draw translucently — either it's been
+	// gemmed (alpha < 1 via _gemAlpha), or its fillStyle carries an alpha
+	// component (8-char hex like "#22222220"), or the rarity itself is
+	// translucent (shadow / ethereal). Used by mob renders to decide whether
+	// the barrel/turret needs the body-mask clip path.
+	_bodyIsTranslucent() {
+		if (this.isGem) return true;
+		if (this.rarity === 2 || this.rarity === 4) return true;
+		const fs = this.fillStyle;
+		if (typeof fs === "string" && fs.length === 9 && fs.startsWith("#")) {
+			const a = parseInt(fs.slice(7, 9), 16);
+			return a < 255;
+		}
+		return false;
+	}
 	// Render this entity's "body polygon" using the gem facet style — same
 	// underlay + per-face shaded triangles + outline trio the standard gem
 	// path uses, but parameterised so mobs (Sentry / Spawner) can paint their
@@ -941,8 +1038,19 @@ export class Shape {
 		const contrast = this._gemContrast ?? 0.3;
 		const mid = this._gemMid ?? 1.15;
 		const alpha = this._gemAlpha ?? 0.7;
-		const base = this.fillStyle;
-		const stroke = this.strokeStyle;
+		// Mirror the rarity branches in _renderGem so a gem mob set to Rainbow
+		// cycles hue, and a gem mob set to Shadow uses the opaque shadow base
+		// instead of the translucent global colour.
+		let base = this.fillStyle;
+		let stroke = this.strokeStyle;
+		if (this.rarity === 3) {
+			const hue = (Date.now() * 0.1) % 360;
+			base = hslToHex(hue, 0.8, 0.6);
+			stroke = hslToHex(hue, 0.6, 0.35);
+		} else if (this.rarity === 2) {
+			base = "#3a3a3a";
+			stroke = "#080808";
+		}
 		const sectorShade = (a) => Math.max(1.0, Math.min(1.5, mid - contrast * Math.sin(a + phase)));
 		// Opaque underlay so anti-aliased seams between facets read as the mid
 		// shade rather than the arena behind.
@@ -1285,9 +1393,6 @@ export class Sentry extends Shape {
 		// Bullets first (under the body).
 		for (const b of this.bullets) b.render(ctx);
 		ctx.globalAlpha = fade;
-		// Triangle body, with OSA-style red hit-flash if recently damaged. When
-		// gemmed (via debug edition key 8) the body swaps to the gem facet
-		// style while the turret / barrels / bullets keep their normal look.
 		const blend = state.damageBlendEnabled ? (this.damageBlend ?? 0) * 0.5 : 0;
 		const r = this.drawSize * sizeMul * sc;
 		const verts = new Array(3);
@@ -1295,48 +1400,90 @@ export class Sentry extends Shape {
 			const a = this.angle + (i / 3) * Math.PI * 2;
 			verts[i] = { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r };
 		}
-		if (this.isGem) {
-			this._renderGemBody(ctx, cx, cy, verts, fade, 4 * sc);
-		} else {
-			ctx.fillStyle = blend > 0 ? lerpColor(this.fillStyle, "#ff5050", blend) : this.fillStyle;
-			ctx.strokeStyle = blend > 0 ? lerpColor(this.strokeStyle, "#7a1a1a", blend) : this.strokeStyle;
+		// Per-rarity colour override for the non-gem body. Rainbow cycles hue;
+		// other rarities just fall through to this.fillStyle which setType
+		// already swapped to the rarity colour.
+		let bodyFill = this.fillStyle;
+		let bodyStroke = this.strokeStyle;
+		if (this.rarity === 3) {
+			const hue = (Date.now() * 0.1) % 360;
+			bodyFill = `hsl(${hue}, 80%, 60%)`;
+			bodyStroke = `hsl(${hue}, 60%, 35%)`;
+		}
+		if (blend > 0 && this.rarity !== 3) {
+			bodyFill = lerpColor(bodyFill, "#ff5050", blend);
+			bodyStroke = lerpColor(bodyStroke, "#7a1a1a", blend);
+		}
+		// Translucent bodies (gemmed sentries, or shadow-rarity sentries whose
+		// fillStyle carries an alpha component) need the barrel/turret to be
+		// masked by the body shape — otherwise the barrel base showing through
+		// the see-through body looks wrong. Clip-to-outside-body restricts
+		// barrel/turret rendering to pixels the body wouldn't cover.
+		const translucent = this._bodyIsTranslucent();
+		const drawTurret = () => {
+			const turretR = SENTRY_TURRET_BODY * this.size * sc;
+			const barrelLen = SENTRY_BARREL_LEN * turretR;
+			const barrelHalfW = (SENTRY_BARREL_W / 2) * turretR;
+			const recoil = this.gunState.gunPosition * turretR;
+			ctx.save();
+			ctx.translate(cx, cy);
+			ctx.rotate(this.turretAngle);
+			ctx.fillStyle = BARREL_FILL;
+			ctx.strokeStyle = BARREL_STROKE;
 			ctx.lineWidth = 4 * sc;
 			ctx.lineJoin = "round";
+			// Barrel is "attached underneath" the turret circle: clip the
+			// barrel draw to OUTSIDE the circle so the circle masks its base.
+			// Same trick the spawner body uses on its barrels — so the barrel
+			// base doesn't double up through the circle even when both are
+			// translucent.
+			ctx.save();
+			const W = ctx.canvas.width, H = ctx.canvas.height;
 			ctx.beginPath();
-			for (let i = 0; i < 3; i++) {
-				if (i === 0) ctx.moveTo(verts[i].x, verts[i].y);
-				else ctx.lineTo(verts[i].x, verts[i].y);
-			}
+			ctx.rect(-W, -H, 2 * W, 2 * H);
+			ctx.arc(0, 0, turretR, 0, Math.PI * 2);
+			ctx.clip("evenodd");
+			ctx.beginPath();
+			ctx.moveTo(-recoil, -barrelHalfW);
+			ctx.lineTo(barrelLen - recoil, -barrelHalfW);
+			ctx.lineTo(barrelLen - recoil, barrelHalfW);
+			ctx.lineTo(-recoil, barrelHalfW);
 			ctx.closePath();
 			ctx.fill();
 			ctx.stroke();
-		}
-		// Auto cannon: barrel + small turret body. Barrel/width are sized relative to the
-		// turret-body radius (Basic-tank style), not the whole sentry — keeps proportions sane.
-		const turretR = SENTRY_TURRET_BODY * this.size * sc;
-		const barrelLen = SENTRY_BARREL_LEN * turretR;
-		const barrelHalfW = (SENTRY_BARREL_W / 2) * turretR;
-		const recoil = this.gunState.gunPosition * turretR;
-		ctx.save();
-		ctx.translate(cx, cy);
-		ctx.rotate(this.turretAngle);
-		ctx.fillStyle = BARREL_FILL;
-		ctx.strokeStyle = BARREL_STROKE;
-		ctx.lineWidth = 4 * sc;
-		ctx.lineJoin = "round";
-		ctx.beginPath();
-		ctx.moveTo(-recoil, -barrelHalfW);
-		ctx.lineTo(barrelLen - recoil, -barrelHalfW);
-		ctx.lineTo(barrelLen - recoil, barrelHalfW);
-		ctx.lineTo(-recoil, barrelHalfW);
-		ctx.closePath();
-		ctx.fill();
-		ctx.stroke();
-		ctx.beginPath();
-		ctx.arc(0, 0, turretR, 0, Math.PI * 2);
-		ctx.fill();
-		ctx.stroke();
-		ctx.restore();
+			ctx.restore();
+			// Turret circle on top, unclipped.
+			ctx.beginPath();
+			ctx.arc(0, 0, turretR, 0, Math.PI * 2);
+			ctx.fill();
+			ctx.stroke();
+			ctx.restore();
+		};
+		const drawBody = () => {
+			if (this.isGem) {
+				this._renderGemBody(ctx, cx, cy, verts, fade, 4 * sc);
+			} else {
+				ctx.fillStyle = bodyFill;
+				ctx.strokeStyle = bodyStroke;
+				ctx.lineWidth = 4 * sc;
+				ctx.lineJoin = "round";
+				ctx.beginPath();
+				for (let i = 0; i < 3; i++) {
+					if (i === 0) ctx.moveTo(verts[i].x, verts[i].y);
+					else ctx.lineTo(verts[i].x, verts[i].y);
+				}
+				ctx.closePath();
+				ctx.fill();
+				ctx.stroke();
+			}
+		};
+		// Sentry's auto-cannon turret sits ON TOP of the body (not flush with
+		// the silhouette like spawner barrels), so it shouldn't be clipped to
+		// outside the body. When translucent it just inherits the body alpha
+		// so it dims to the same see-through level.
+		drawBody();
+		ctx.globalAlpha = translucent ? (this._gemAlpha ?? 0.7) * fade : fade;
+		drawTurret();
 		ctx.globalAlpha = 1;
 		if (!this.dying) {
 			drawHealthBar(ctx, cx, cy, r, this.health, this.maxHealth, game.scale);
@@ -1597,59 +1744,92 @@ export class SentrySpawner extends Shape {
 		const r = this.drawSize * sizeMul * sc;
 		const lw = 4 * sc;
 		ctx.globalAlpha = fade;
-		// Director-style barrels: trapezoid that widens at the tip, one mounted on
-		// each side of the triangle. Drawn under the body so the body covers the
-		// inset base of each barrel.
-		const sideMid = r * 0.5;                   // apothem of equilateral triangle.
-		const barrelLen = SS_BARREL_LEN * r;
-		const innerHW = (SS_BARREL_INNER_W / 2) * r;
-		const outerHW = (SS_BARREL_OUTER_W / 2) * r;
-		const inset = SS_BARREL_INSET * r;
-		ctx.fillStyle = "#b1b3bc";
-		ctx.strokeStyle = "#646568";
-		ctx.lineWidth = lw;
-		ctx.lineJoin = "round";
-		for (let i = 0; i < SS_BARRELS; i++) {
-			const dir = this.angle + Math.PI / 3 + i * (Math.PI * 2 / 3);
-			const recoil = this.barrelStates[i].position * r;
-			ctx.save();
-			ctx.translate(cx, cy);
-			ctx.rotate(dir);
-			ctx.beginPath();
-			const baseX = sideMid - inset - recoil;
-			const tipX = sideMid + barrelLen - recoil;
-			ctx.moveTo(baseX, -innerHW);
-			ctx.lineTo(tipX, -outerHW);
-			ctx.lineTo(tipX, outerHW);
-			ctx.lineTo(baseX, innerHW);
-			ctx.closePath();
-			ctx.fill();
-			ctx.stroke();
-			ctx.restore();
-		}
-		// Triangle body with red flash on damage. Gem swap via debug — same
-		// faceted body the gem polygons / sentries use when isGem is set.
 		const blend = state.damageBlendEnabled ? this.damageBlend * 0.5 : 0;
 		const ssVerts = new Array(3);
 		for (let i = 0; i < 3; i++) {
 			const a = this.angle + (i / 3) * Math.PI * 2;
 			ssVerts[i] = { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r };
 		}
-		if (this.isGem) {
-			this._renderGemBody(ctx, cx, cy, ssVerts, fade, lw);
-		} else {
-			ctx.fillStyle = blend > 0 ? lerpColor(this.fillStyle, "#ff5050", blend) : this.fillStyle;
-			ctx.strokeStyle = blend > 0 ? lerpColor(this.strokeStyle, "#7a1a1a", blend) : this.strokeStyle;
+		// Rainbow rarity: hue-cycling fill/stroke for the non-gem body.
+		let bodyFill = this.fillStyle;
+		let bodyStroke = this.strokeStyle;
+		if (this.rarity === 3) {
+			const hue = (Date.now() * 0.1) % 360;
+			bodyFill = `hsl(${hue}, 80%, 60%)`;
+			bodyStroke = `hsl(${hue}, 60%, 35%)`;
+		}
+		if (blend > 0 && this.rarity !== 3) {
+			bodyFill = lerpColor(bodyFill, "#ff5050", blend);
+			bodyStroke = lerpColor(bodyStroke, "#7a1a1a", blend);
+		}
+		const sideMid = r * 0.5;                   // apothem of equilateral triangle.
+		const barrelLen = SS_BARREL_LEN * r;
+		const innerHW = (SS_BARREL_INNER_W / 2) * r;
+		const outerHW = (SS_BARREL_OUTER_W / 2) * r;
+		const inset = SS_BARREL_INSET * r;
+		const drawBarrels = () => {
+			ctx.fillStyle = "#b1b3bc";
+			ctx.strokeStyle = "#646568";
 			ctx.lineWidth = lw;
 			ctx.lineJoin = "round";
+			for (let i = 0; i < SS_BARRELS; i++) {
+				const dir = this.angle + Math.PI / 3 + i * (Math.PI * 2 / 3);
+				const recoil = this.barrelStates[i].position * r;
+				ctx.save();
+				ctx.translate(cx, cy);
+				ctx.rotate(dir);
+				ctx.beginPath();
+				const baseX = sideMid - inset - recoil;
+				const tipX = sideMid + barrelLen - recoil;
+				ctx.moveTo(baseX, -innerHW);
+				ctx.lineTo(tipX, -outerHW);
+				ctx.lineTo(tipX, outerHW);
+				ctx.lineTo(baseX, innerHW);
+				ctx.closePath();
+				ctx.fill();
+				ctx.stroke();
+				ctx.restore();
+			}
+		};
+		const drawBody = () => {
+			if (this.isGem) {
+				this._renderGemBody(ctx, cx, cy, ssVerts, fade, lw);
+			} else {
+				ctx.fillStyle = bodyFill;
+				ctx.strokeStyle = bodyStroke;
+				ctx.lineWidth = lw;
+				ctx.lineJoin = "round";
+				ctx.beginPath();
+				for (let i = 0; i < 3; i++) {
+					if (i === 0) ctx.moveTo(ssVerts[i].x, ssVerts[i].y);
+					else ctx.lineTo(ssVerts[i].x, ssVerts[i].y);
+				}
+				ctx.closePath();
+				ctx.fill();
+				ctx.stroke();
+			}
+		};
+		// Translucent bodies (gemmed spawner, or shadow-rarity spawner) get the
+		// same outside-body clip for barrels so the inset bases don't show
+		// through the see-through body.
+		if (this._bodyIsTranslucent()) {
+			ctx.save();
 			ctx.beginPath();
-			for (let i = 0; i < 3; i++) {
-				if (i === 0) ctx.moveTo(ssVerts[i].x, ssVerts[i].y);
+			ctx.rect(0, 0, ctx.canvas.width, ctx.canvas.height);
+			for (let i = ssVerts.length - 1; i >= 0; --i) {
+				if (i === ssVerts.length - 1) ctx.moveTo(ssVerts[i].x, ssVerts[i].y);
 				else ctx.lineTo(ssVerts[i].x, ssVerts[i].y);
 			}
 			ctx.closePath();
-			ctx.fill();
-			ctx.stroke();
+			ctx.clip("evenodd");
+			ctx.globalAlpha = (this._gemAlpha ?? 0.7) * fade;
+			drawBarrels();
+			ctx.restore();
+			ctx.globalAlpha = fade;
+			drawBody();
+		} else {
+			drawBarrels();
+			drawBody();
 		}
 
 		if (SS_HEALER_ENABLED) {

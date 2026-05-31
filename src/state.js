@@ -123,3 +123,19 @@ export function playerScoreMul() {
 export function isSmolNamed() {
 	return /smol/i.test(state.playerName || "");
 }
+// "Evil" or "Red-" anywhere in the name turns the player's tanks into red team
+// — body fill + bullet colour swap to red.
+export function isRedTeamName() {
+	const n = state.playerName || "";
+	return /evil/i.test(n) || /red-/i.test(n);
+}
+// "DyingLight" (no spaces between the words) anywhere in the name unlocks the
+// Q-press flash easter egg.
+export function isDyingLightName() {
+	return /dyinglight/i.test(state.playerName || "");
+}
+// Returns true if any name-based easter egg is currently active. Drives the
+// "What's in a name" achievement.
+export function anyEasterEggActive() {
+	return isRedTeamName() || isDyingLightName() || /big/i.test(state.playerName || "") || /smol/i.test(state.playerName || "");
+}

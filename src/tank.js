@@ -1,4 +1,4 @@
-import { state, playerScoreMul } from "./state.js";
+import { state, playerScoreMul, isRedTeamName } from "./state.js";
 import { Vec2, formatNumber, lerpColor, REGEN_PER_FRAME, osaCurve, osaApply } from "./utils.js";
 import { game } from "./game.js";
 import { mouse, keys } from "./input.js";
@@ -8,6 +8,12 @@ import { TANK_DEFS } from "./tankDefs.js";
 
 const BODY_FILL = "#58b0d0";
 const BODY_STROKE = "#48646e";
+const RED_BODY_FILL = "#e6373d";
+const RED_BODY_STROKE = "#7a1c20";
+// Resolve the tank/bullet body colours through this so the Red Team easter egg
+// just flips a single source of truth.
+function teamBodyFill()   { return isRedTeamName() ? RED_BODY_FILL   : BODY_FILL; }
+function teamBodyStroke() { return isRedTeamName() ? RED_BODY_STROKE : BODY_STROKE; }
 const DEAD_FILL = "#707070";          // gray body for dying/spawning tanks.
 const DEAD_STROKE = "#3f3f3f";
 const DEATH_ANIM_MS = 2000;          // blue → gray blend duration on death.
@@ -515,8 +521,8 @@ export class Bullet {
 			ctx.fillStyle = "#ef99c3";
 			ctx.strokeStyle = "#a55c83";
 		} else {
-			ctx.fillStyle = BODY_FILL;
-			ctx.strokeStyle = BODY_STROKE;
+			ctx.fillStyle = teamBodyFill();
+			ctx.strokeStyle = teamBodyStroke();
 		}
 		ctx.lineWidth = 4 * sc;
 		if (this.isTrap) {
@@ -1002,8 +1008,8 @@ export class Tank {
 			} else {
 				const sinceDeath = now - this.deathStartTime;
 				const t = Math.min(1, sinceDeath / DEATH_ANIM_MS);
-				const fill = lerpColor(BODY_FILL, DEAD_FILL, t);
-				const stroke = lerpColor(BODY_STROKE, DEAD_STROKE, t);
+				const fill = lerpColor(teamBodyFill(), DEAD_FILL, t);
+				const stroke = lerpColor(teamBodyStroke(), DEAD_STROKE, t);
 				renderTank(ctx, this, this.deathPos.x, this.deathPos.y, this.angle, this.size, true, fill, stroke, true);
 			}
 			drawText(
@@ -1021,13 +1027,13 @@ export class Tank {
 				// Reverse of corpse fade: start big and faint, settle to normal size and full opacity.
 				const p = 1 - sinceSpawn / SPAWN_FADE_MS;
 				ctx.globalAlpha = 1 - p;
-				renderTank(ctx, this, this.pos.x, this.pos.y, this.angle, this.size * (1 + 0.5 * p), true, BODY_FILL, BODY_STROKE, true);
+				renderTank(ctx, this, this.pos.x, this.pos.y, this.angle, this.size * (1 + 0.5 * p), true, teamBodyFill(), teamBodyStroke(), true);
 				ctx.globalAlpha = 1;
 				return;
 			}
 			this.spawnStartTime = null;
 		}
-		renderTank(ctx, this, this.pos.x, this.pos.y, this.angle, this.size, true, BODY_FILL, BODY_STROKE, true);
+		renderTank(ctx, this, this.pos.x, this.pos.y, this.angle, this.size, true, teamBodyFill(), teamBodyStroke(), true);
 	}
 }
 
