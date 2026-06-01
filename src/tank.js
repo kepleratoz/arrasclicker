@@ -963,9 +963,16 @@ export class Tank {
 				const keepout = keepDistance ? tankRange(this) * rangeMul - (target.size + this.size) : (def.keepout ?? 30);
 				const desired = Math.max(60, target.size + this.size + keepout);
 				const speed = tankSpeed(this);
+				// If a mob (or shift-click priority target) closes inside the
+				// hover band, retreat instead of holding ground — keeps tanks
+				// from being shredded by adjacent sentries at point-blank.
+				const tooClose = keepDistance ? desired * 0.6 : 0;
 				if (dist > desired) {
 					this.velocity.x = Math.cos(this.angle) * speed;
 					this.velocity.y = Math.sin(this.angle) * speed;
+				} else if (keepDistance && dist < tooClose) {
+					this.velocity.x = -Math.cos(this.angle) * speed;
+					this.velocity.y = -Math.sin(this.angle) * speed;
 				} else {
 					this.velocity.mulVal(0.5);
 				}

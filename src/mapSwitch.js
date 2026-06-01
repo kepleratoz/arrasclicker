@@ -25,11 +25,24 @@ function freshWorld() {
 	return { shapes: [], sieges: [], walls: [], particles: [], flyingText: [], goldEffects: [], lightningBolts: [] };
 }
 
+// Plain snapshot of a Siege — enough to reconstruct it on load. The pos is
+// regenerated each frame from the room centre, so it's not stored. Bullets,
+// gun states, etc. are transient and reset on construction.
+function serializeSiege(s) {
+	return { tier: s.tier, neutral: !!s.neutral, health: s.health };
+}
+function reconstructSiege(snap) {
+	const s = new Siege(snap.tier ?? 1, { neutral: !!snap.neutral });
+	if (snap.health != null) s.health = Math.min(snap.health, s.maxHealth);
+	return s;
+}
+
 function snapshotCurrent() {
 	snapshotTanks();
 	const snap = {};
 	for (const f of PER_MAP_FIELDS) snap[f] = state[f];
 	snap.tanks = state.tanks;
+	snap.sieges = game.sieges.map(serializeSiege);
 	state.maps[state.currentMap] = snap;
 	// World references — kept off `state` so they don't go through JSON.stringify.
 	const w = worlds[state.currentMap];
@@ -46,6 +59,42 @@ function applyMap(idx) {
 	game.tanks = [];
 	syncTanks();
 	if (idx === 1) ensureCrashZoneSeeded();
+}
+
+// onBeforeSave hook — snapshots the *current* map's sieges into
+// state.maps[currentMap].sieges so the next save captures them. Other maps'
+// sieges were already snapshotted into state.maps[i].sieges when the player
+// last switched away from that map.
+export function snapshotSiegesForSave() {
+	if (!state.maps) return;
+	const snap = state.maps[state.currentMap] || (state.maps[state.currentMap] = {});
+	snap.sieges = game.sieges.map(serializeSiege);
+	// Also keep any other maps' sieges that we hadn't migrated yet — older
+	// saves (pre-this-task) don't have the field at all.
+	for (let i = 0; i < state.maps.length; i++) {
+		if (i === state.currentMap) continue;
+		const other = state.maps[i];
+		if (other && !other.sieges && worlds[i] && Array.isArray(worlds[i].sieges)) {
+			other.sieges = worlds[i].sieges.map(serializeSiege);
+		}
+	}
+}
+
+// Called after loadFromStorage — restores the current map's game.sieges and
+// any other map's worlds[i].sieges from the saved snapshot.
+export function restoreSiegesAfterLoad() {
+	if (!state.maps) return;
+	for (let i = 0; i < state.maps.length; i++) {
+		const snap = state.maps[i];
+		if (!snap || !Array.isArray(snap.sieges)) continue;
+		const sieges = snap.sieges.map(reconstructSiege);
+		if (i === state.currentMap) {
+			game.sieges = sieges;
+		} else {
+			if (!worlds[i].sieges) Object.assign(worlds[i], freshWorld());
+			worlds[i].sieges = sieges;
+		}
+	}
 }
 
 // Seed Crash Zone's fixed wall layout the first time we land on Map 1. The

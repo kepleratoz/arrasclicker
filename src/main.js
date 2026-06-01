@@ -3,7 +3,7 @@ import { mouse, keys } from "./input.js";
 import { game } from "./game.js";
 import { Room } from "./room.js";
 import { Button } from "./button.js";
-import { Shape, Sentry, SentrySpawner, TYPE_NAMES, TYPE_SIZES, TYPE_SIDES, makeShapeData } from "./shape.js";
+import { Shape, Sentry, SentrySpawner, TYPE_NAMES, TYPE_SIZES, TYPE_SIDES, makeShapeData, SENTRY_SCORE_FRACTION, SPAWNER_SCORE_FRACTION } from "./shape.js";
 import { Vec2 } from "./utils.js";
 import { drawText } from "./render.js";
 import { tabs, generalTab } from "./tabs.js";
@@ -13,7 +13,7 @@ import { syncTanks, tankUnderMouse, renderTankPreview, snapshotTanks, TANK_UPGRA
 import { Siege } from "./siege.js";
 import { TANK_DEFS } from "./tankDefs.js";
 import { formatNumber, darken, colors } from "./utils.js";
-import { switchToMap, checkMap1Unlock, ensureCrashZoneSeeded, shouldHaveNeutralSanctuary } from "./mapSwitch.js";
+import { switchToMap, checkMap1Unlock, ensureCrashZoneSeeded, shouldHaveNeutralSanctuary, snapshotSiegesForSave, restoreSiegesAfterLoad } from "./mapSwitch.js";
 
 let upgradePanelAnim = 1;
 let upgradePanelLastTank = null;
@@ -332,8 +332,12 @@ if (state.poisonOwned && !state.poisonLevel) state.poisonLevel = 1;
 if (state.lightningOwned && !state.lightningLevel) state.lightningLevel = 1;
 syncTanks();
 ensureCrashZoneSeeded();   // seed walls + neutral sentry if loading directly into Map 1.
+// Rehydrate any sanctuaries that were captured in the save snapshot — both the
+// current map's `game.sieges` and the inactive map's `worlds[i].sieges`.
+restoreSiegesAfterLoad();
 // Sanctuary no longer auto-spawns; toggle it via the debug panel.
 onBeforeSave(snapshotTanks);
+onBeforeSave(snapshotSiegesForSave);
 enableAutoSave();
 
 game.resize();
@@ -1579,22 +1583,36 @@ function frame(now) {
 			const rarityLabel = hovered.rarity >= 0 ? rarityNames[hovered.rarity] + " " : "";
 			const yBase = game.height - 12 * s - lineH * 3;
 			const hpDisplay = " - " + Math.max(0, Math.floor(hovered.health)) + "/" + hovered.maxHealth;
-			// Gem shapes use a gemstone naming convention. The leading rarity
-			// label ("Shiny ", "Legendary ", ...) still prepends, e.g.
-			// "Shiny Amethyst". Types without a gemstone alias fall back to
-			// "Gem <Polygon>" so debug-spawned Heptagon/Octagon/Nonagon gems
-			// still read sensibly.
-			const GEM_NAMES = ["Pearl", "Topaz", "Citrine", "Amethyst", "Aquamarine"];
-			let typeName;
-			if (hovered.isSentry) typeName = "Sentry";
-			else if (hovered.isGold) typeName = "Golden " + TYPE_NAMES[hovered.type];
-			else if (hovered.isGemOctagon) typeName = "Diamond";
-			else if (hovered.isGem) typeName = GEM_NAMES[hovered.type] ?? ("Gem " + TYPE_NAMES[hovered.type]);
-			else typeName = TYPE_NAMES[hovered.type];
-			// Rarity-themed fill for the main hover line; stroke stays default.
-			drawText(game.ctx, rarityLabel + typeName + hpDisplay, x, yBase, false, true, false, 28 * s, rarityTextFill(hovered.rarity, hovered.isGold, hovered.isGem));
-			if (!hovered.isSentry) drawText(game.ctx, "Tier " + hovered.layers, x, yBase + lineH, false, true, false, 24 * s);
-			drawText(game.ctx, formatNumber(hovered.score) + " score", x, yBase + lineH * 2, false, true, false, 24 * s);
+			// Mobs (Sentry / Sentry Spawner) use a custom three-line layout:
+			// "Name", "Tier N - Mob|Miniboss", "<score> - <payout %>".
+			if (hovered.isSentry || hovered.isSentrySpawner) {
+				const isSpawner = hovered.isSentrySpawner;
+				const name = isSpawner ? "Sentry Spawner" : "Sentry";
+				const role = isSpawner ? "Miniboss" : "Mob";
+				const frac = isSpawner ? SPAWNER_SCORE_FRACTION : SENTRY_SCORE_FRACTION;
+				const cap = isSpawner ? 1e21 : 1e19;
+				const expectedScore = Math.min((state.score || 0) * frac, cap);
+				const pct = (frac * 100).toFixed(frac < 0.1 ? 1 : 0);
+				drawText(game.ctx, name + hpDisplay, x, yBase, false, true, false, 28 * s);
+				drawText(game.ctx, "Tier " + (hovered.layers || 1) + " - " + role, x, yBase + lineH, false, true, false, 24 * s);
+				drawText(game.ctx, formatNumber(expectedScore) + " - " + pct + "%", x, yBase + lineH * 2, false, true, false, 24 * s);
+			} else {
+				// Gem shapes use a gemstone naming convention. The leading rarity
+				// label ("Shiny ", "Legendary ", ...) still prepends, e.g.
+				// "Shiny Amethyst". Types without a gemstone alias fall back to
+				// "Gem <Polygon>" so debug-spawned Heptagon/Octagon/Nonagon gems
+				// still read sensibly.
+				const GEM_NAMES = ["Pearl", "Topaz", "Citrine", "Amethyst", "Aquamarine"];
+				let typeName;
+				if (hovered.isGold) typeName = "Golden " + TYPE_NAMES[hovered.type];
+				else if (hovered.isGemOctagon) typeName = "Diamond";
+				else if (hovered.isGem) typeName = GEM_NAMES[hovered.type] ?? ("Gem " + TYPE_NAMES[hovered.type]);
+				else typeName = TYPE_NAMES[hovered.type];
+				// Rarity-themed fill for the main hover line; stroke stays default.
+				drawText(game.ctx, rarityLabel + typeName + hpDisplay, x, yBase, false, true, false, 28 * s, rarityTextFill(hovered.rarity, hovered.isGold, hovered.isGem));
+				drawText(game.ctx, "Tier " + hovered.layers, x, yBase + lineH, false, true, false, 24 * s);
+				drawText(game.ctx, formatNumber(hovered.score) + " score", x, yBase + lineH * 2, false, true, false, 24 * s);
+			}
 		}
 		// Top-middle menu renders LAST so its fullscreen panels sit on top of the
 		// map tab, save/load, debug panel, and everything else. When a menu is

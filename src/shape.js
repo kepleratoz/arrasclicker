@@ -26,6 +26,10 @@ const DEATH_FRAMES = 18; // ~300ms at 60fps
 // spawners start oversized & transparent and settle to full opacity over the
 // fade window. Public so any wave-spawned mob picks up the animation by default.
 const MOB_SPAWN_FADE_MS = 300;
+// Fraction of the player's current score a killed mob pays out. Both the kill
+// logic and the hover-info tooltip read these so they stay in sync.
+export const SENTRY_SCORE_FRACTION = 0.01;    // 1 % per Sentry kill.
+export const SPAWNER_SCORE_FRACTION = 0.20;   // 20 % per Sentry Spawner kill.
 // 0..1 intensity of the DyingLight Q flash. Linear decay over 500 ms from the
 // timestamp the player last pressed Q (set by main.js's hotkey handler).
 function dyingLightFlashIntensity() {
@@ -1186,6 +1190,10 @@ const SENTRY_TURN_RATE = 0.08;
 // OSA Class.sentry BODY: { DAMAGE: base.DAMAGE = 3, SPEED: 0.5·base.SPEED, HEALTH: 0.3·base.HEALTH }.
 const SENTRY_BODY_DAMAGE = 3;
 const SENTRY_MOVE_SPEED = 0.6;       // ≈ 0.5 × our BASE_TANK_SPEED (1.2), mirroring OSA's 0.5·base.SPEED.
+// Hard cap on Sentry / Spawner velocity per frame. Without this, fresh spawns
+// far from the orbit radius pile up a huge radial-correction component on
+// frame one and lunge across the map at several times their cruise speed.
+const MOB_MAX_SPEED = 1.5;
 const SENTRY_ORBIT_RADIUS = 368;     // world units from the chosen sanctuary's center (+15%).
 const SENTRY_RADIAL_CORRECTION = 0.04;  // strength of radial pull-toward-orbit-radius.
 const SENTRY_RECOIL_IMPULSE = 0.18;
@@ -1254,7 +1262,7 @@ export class Sentry extends Shape {
 		if (this.dying) return;
 		// A killed sentry pays out 5% of the player's current score, capped at e18.
 		if (!this.neutral) {
-			this.score = Math.min(state.score * 0.05, 1e19);
+			this.score = Math.min(state.score * SENTRY_SCORE_FRACTION, 1e19);
 			// Gemmed sentries (debug only) carry the same score multiplier the
 			// gem polygons get on top of their normal payout.
 			if (this.isGem) this.score *= this._gemScoreBoost();
@@ -1342,6 +1350,11 @@ export class Sentry extends Shape {
 			const tanY = dx / dist * this.orbitDir;
 			this.velocity.x = tanX * SENTRY_MOVE_SPEED + radX * radialError * SENTRY_RADIAL_CORRECTION;
 			this.velocity.y = tanY * SENTRY_MOVE_SPEED + radY * radialError * SENTRY_RADIAL_CORRECTION;
+			const vmag = Math.sqrt(this.velocity.x * this.velocity.x + this.velocity.y * this.velocity.y);
+			if (vmag > MOB_MAX_SPEED) {
+				this.velocity.x = (this.velocity.x / vmag) * MOB_MAX_SPEED;
+				this.velocity.y = (this.velocity.y / vmag) * MOB_MAX_SPEED;
+			}
 			this.pos.add(this.velocity);
 			pushOutOfWalls(this.pos, this.size);
 			// Body faces the direction it's moving in.
@@ -1598,8 +1611,10 @@ export class SentrySpawner extends Shape {
 	}
 	startDying() {
 		if (this.dying) return;
-		// A killed spawner pays out 100% of the player's current score, capped at e21.
-		this.score = Math.min(state.score, 1e21);
+		// A killed spawner pays out a fraction of the player's current score
+		// (capped at e21). Multiplier exposed so the hover tooltip can show the
+		// same percentage the kill payout uses.
+		this.score = Math.min(state.score * SPAWNER_SCORE_FRACTION, 1e21);
 		if (this.isGem) this.score *= this._gemScoreBoost();
 		this.dying = state.shapeDeathAnimEnabled ? 1 : DEATH_FRAMES + 1;
 	}
@@ -1672,6 +1687,11 @@ export class SentrySpawner extends Shape {
 			const tanY = dx / dist * this.orbitDir;
 			this.velocity.x = tanX * SS_MOVE_SPEED + radX * radialError * SS_RADIAL_CORRECTION;
 			this.velocity.y = tanY * SS_MOVE_SPEED + radY * radialError * SS_RADIAL_CORRECTION;
+			const ssVmag = Math.sqrt(this.velocity.x * this.velocity.x + this.velocity.y * this.velocity.y);
+			if (ssVmag > MOB_MAX_SPEED) {
+				this.velocity.x = (this.velocity.x / ssVmag) * MOB_MAX_SPEED;
+				this.velocity.y = (this.velocity.y / ssVmag) * MOB_MAX_SPEED;
+			}
 			this.pos.add(this.velocity);
 			pushOutOfWalls(this.pos, this.size);
 		}
