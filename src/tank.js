@@ -79,6 +79,11 @@ export function tankCanTarget(shape) {
 	if (shape.isGold) return false;
 	if (shape.isGem) return false;     // gems are debug-spawned curiosities, not valid targets.
 	if (shape.neutral) return false;   // neutral sentries / sanctuaries are landmarks, never targeted.
+	// Mobs (Sentry / SentrySpawner) bypass every targeting filter — the rarity
+	// cap, force-type/tier caps, and rarity-based lock-on rules all defer to
+	// "always shoot the mob". They're an explicit threat the player can't opt
+	// out of via the filter sliders.
+	if (shape.isSentry || shape.isSentrySpawner) return true;
 	// Two independent gates:
 	//   • Rarity cap (`state.tankRarityCap`): blocks high-rarity shapes the player wants
 	//     to leave alone (e.g. "don't target Legendaries and above").
@@ -90,7 +95,10 @@ export function tankCanTarget(shape) {
 	if ((state.tankForceTierCap ?? -1) >= 1 && (shape.layers ?? 1) >= state.tankForceTierCap) return true;
 	return shape.rarity < state.tankRarityCap - 1;
 }
-function tankCanLockOn(shape) { return tankCanTarget(shape) && shape.rarity !== 4; }
+function tankCanLockOn(shape) {
+	if (shape.isSentry || shape.isSentrySpawner) return true;
+	return tankCanTarget(shape) && shape.rarity !== 4;
+}
 function tankDamageMul(shape) { return shape.rarity === 4 ? 0.1 : 1; }
 function tankBaseDamage(tank) { return osaApply(3, tankSkill(tank, "damage")) * goldTankDamageMul(); }
 function tankBulletLife() { return BASE_BULLET_LIFE; }
@@ -243,6 +251,8 @@ export class Bullet {
 		this.pos = pos;
 		this.angle = angle;
 		this.isTrap = !!shootCfg.isTrap;
+		// 3 = trapper triangle, 4 = builder block (OSA SHAPE -3 vs -4).
+		this.trapSides = shootCfg.trapSides ?? 3;
 		const upgradeSpeedMul = shootCfg.ignoreUpgradeSpeed
 			? 1
 			: this.isTrap ? 1 + (tankBulletSpeedMul(tank) - 1) * 0.5 : tankBulletSpeedMul(tank);
@@ -264,6 +274,16 @@ export class Bullet {
 		this.healAmount = shootCfg.healAmount ?? 0;
 		this.targetsTanks = !!shootCfg.targetsTanks;
 		this.ignoreFood = !!shootCfg.ignoreFood;   // pass through `damageType === 1` shapes (polygons).
+		this.isMissile = !!shootCfg.isMissile;
+		if (this.isMissile) {
+			// Rear-jet sub-bullets — OSA's minimissile fires bullets backward
+			// via combineStats([g.basic, {recoil: 0.5}, g.lowPower]). The launcher
+			// def supplies the sub-bullet stats and how often (in frames) to fire.
+			this.missileSubCfg = shootCfg.missileSubCfg ?? null;
+			this.missileSubReload = shootCfg.missileSubReload ?? 12;
+			this.missileSubSizeMul = shootCfg.missileSubSizeMul ?? 0.55;
+			this.missileFireTime = Math.floor(this.missileSubReload * 0.5);   // first puff hits mid-reload so the trail starts quick.
+		}
 		this.isDrone = !!shootCfg.isDrone;
 		if (this.isDrone) {
 			this.life = Infinity;                  // drones don't expire from age.
@@ -402,6 +422,31 @@ export class Bullet {
 		}
 		this.life -= 1;
 		if (this.life <= 0) { this.startDying(); return; }
+		// Missiles periodically spawn a rear-jet sub-bullet — OSA minimissile
+		// AUTOFIRE behaviour. Sub-bullets reuse the same Bullet class and live
+		// in the firing tank's bullet list so they hit normally and clean up.
+		if (this.isMissile && this.tank && this.tank.bullets && this.missileSubCfg) {
+			this.missileFireTime -= 1;
+			if (this.missileFireTime <= 0) {
+				this.missileFireTime = this.missileSubReload;
+				// Spawn at the muzzle of the rear barrel so the trail visibly
+				// emerges from the back of the missile rather than its centre.
+				const barrelLen = this.size * 1.4;
+				const sx = this.pos.x - Math.cos(this.angle) * barrelLen;
+				const sy = this.pos.y - Math.sin(this.angle) * barrelLen;
+				const sub = new Bullet(
+					new Vec2(sx, sy),
+					this.angle + Math.PI,
+					this.tank,
+					this.missileSubCfg,
+					0,
+					1,
+					this.size * this.missileSubSizeMul,
+				);
+				sub.isMissileSub = true;
+				this.tank.bullets.push(sub);
+			}
+		}
 		if (this.targetsTanks) {
 			// Tanks first — OSA continuous multihit, damage routed through shield → health.
 			for (const t of game.tanks) {
@@ -526,23 +571,61 @@ export class Bullet {
 		}
 		ctx.lineWidth = 4 * sc;
 		if (this.isTrap) {
-			drawTrap(ctx, this.pos.x * sc, this.pos.y * sc, this.size * sizeMul * sc, this.angle);
+			drawTrap(ctx, this.pos.x * sc, this.pos.y * sc, this.size * sizeMul * sc, this.angle, this.trapSides);
+			ctx.fill();
+			ctx.stroke();
 		} else if (this.isDrone) {
 			// OSA Class.drone SHAPE = 3 (triangle), oriented along motion.
 			drawPolygon(ctx, this.pos.x, this.pos.y, this.size * sizeMul, this.angle, 3);
+			ctx.fill();
+			ctx.stroke();
+		} else if (this.isMissile) {
+			// OSA minimissile body = sphere + a rear-facing barrel poking out of
+			// the back where its thrust bullets exit. Barrel drawn first so the
+			// missile circle covers its base, matching OSA layering.
+			const cx = this.pos.x * sc;
+			const cy = this.pos.y * sc;
+			const r = this.size * sizeMul * sc;
+			const barrelLen = r * 1.4;
+			const barrelHalfW = r * 0.55;
+			const bodyFill = ctx.fillStyle;
+			const bodyStroke = ctx.strokeStyle;
+			ctx.save();
+			ctx.translate(cx, cy);
+			ctx.rotate(this.angle);
+			ctx.fillStyle = BARREL_FILL;
+			ctx.strokeStyle = BARREL_STROKE;
+			ctx.lineJoin = "round";
+			ctx.beginPath();
+			ctx.moveTo(0, -barrelHalfW);
+			ctx.lineTo(-barrelLen, -barrelHalfW);
+			ctx.lineTo(-barrelLen, barrelHalfW);
+			ctx.lineTo(0, barrelHalfW);
+			ctx.closePath();
+			ctx.fill();
+			ctx.stroke();
+			ctx.fillStyle = bodyFill;
+			ctx.strokeStyle = bodyStroke;
+			ctx.beginPath();
+			ctx.arc(0, 0, r, 0, Math.PI * 2);
+			ctx.fill();
+			ctx.stroke();
+			ctx.restore();
 		} else {
 			drawPolygon(ctx, this.pos.x, this.pos.y, this.size * sizeMul, 0, 0);
+			ctx.fill();
+			ctx.stroke();
 		}
-		ctx.fill();
-		ctx.stroke();
 		ctx.globalAlpha = 1;
 	}
 }
 
 
-function drawTrap(ctx, x, y, radius, angle) {
-	const sides = 3;
-	const dip = 1 - 6 / (sides * sides); // OSA star formula → 0.333 for 3 points
+// OSA SHAPE: -N renders as an N-pointed star — outer points at `radius`, inner
+// "dip" vertices at `radius * (1 - 6/N²)`. Trapper uses 3 (the standard trap
+// triangle), Builder uses 4 — the chunky 4-pointed star that reads as a block.
+function drawTrap(ctx, x, y, radius, angle, sides = 3) {
+	const dip = 1 - 6 / (sides * sides);
 	const inner = radius * dip;
 	ctx.beginPath();
 	ctx.moveTo(x + radius * Math.cos(angle), y + radius * Math.sin(angle));
@@ -711,7 +794,11 @@ export class Tank {
 	canUpgrade() {
 		if (!UPGRADES_ENABLED) return false;
 		const def = TANK_DEFS[this.defKey];
-		return this.level >= UPGRADE_LEVEL && def.upgrades && def.upgrades.length > 0;
+		if (!def.upgrades || def.upgrades.length === 0) return false;
+		// Tier-1 upgrades (from Basic) unlock at level 15; tier-2 upgrades
+		// (Double Twin / Triple Shot from a tier-1 class) unlock at 30.
+		const needed = this.defKey === "basic" ? UPGRADE_LEVEL : UPGRADE_LEVEL * 2;
+		return this.level >= needed;
 	}
 	upgradeTo(defKey) {
 		const def = TANK_DEFS[this.defKey];
@@ -863,9 +950,17 @@ export class Tank {
 				// Keep-out distance: for mobs, hover at ~50% of the tank's own weapon
 				// range so it shoots but doesn't body-rush. Drone tanks (Director)
 				// get 3× the basic-tank range. Non-mob targets use the tank's def
-				// keepout (defaults to 30).
+				// keepout (defaults to 30). Shift-click priority targets get the
+				// mob treatment too — otherwise tanks rush in and corpse-camp
+				// instead of shooting from range like the player intends.
 				const isMobTarget = !!(target.isSentry || target.isSentrySpawner);
-				const keepout = isMobTarget ? tankRange(this) * 0.5 - (target.size + this.size) : (def.keepout ?? 30);
+				const isPriorityTarget = target === game.priorityTarget;
+				const keepDistance = isMobTarget || isPriorityTarget;
+				// def.keepRangeMul lets specific classes hover at a different
+				// fraction of their weapon range (Pounder-line tanks ask for 1.0
+				// so their slow heavy bullets get full arc).
+				const rangeMul = def.keepRangeMul ?? 0.5;
+				const keepout = keepDistance ? tankRange(this) * rangeMul - (target.size + this.size) : (def.keepout ?? 30);
 				const desired = Math.max(60, target.size + this.size + keepout);
 				const speed = tankSpeed(this);
 				if (dist > desired) {
@@ -939,7 +1034,7 @@ export class Tank {
 			if (this.bullets[i].dead) this.bullets.splice(i, 1);
 		}
 	}
-	_fireGun(gun, gs, now, interval) {
+	_fireGun(gun, gs, now, interval, gunIndex) {
 		const cosA = Math.cos(this.angle);
 		const sinA = Math.sin(this.angle);
 		const mountX = this.pos.x + (gun.x * cosA - gun.y * sinA) * this.size;
@@ -951,7 +1046,9 @@ export class Tank {
 		const shudderAmt = (gun.shoot.shudder ?? 0) * 0.12;
 		const fireAngle = barrelDir + (Math.random() - 0.5) * sprayRad;
 		const shudderMul = 1 + (Math.random() - 0.5) * shudderAmt;
-		this.bullets.push(new Bullet(new Vec2(tipX, tipY), fireAngle, this, gun.shoot, gun.width, shudderMul));
+		const bullet = new Bullet(new Vec2(tipX, tipY), fireAngle, this, gun.shoot, gun.width, shudderMul);
+		bullet.parentGunIndex = gunIndex;
+		this.bullets.push(bullet);
 		gs.shootTime = now + interval;
 		gs.gunMotion += RECOIL_IMPULSE;
 	}
@@ -973,16 +1070,19 @@ export class Tank {
 				if (canFire && now > gs.shootTime) {
 					// Drone-spawning guns are capped at maxChildren — OSA WAIT_TO_CYCLE: true,
 					// the reload pauses until a drone dies, so don't advance shootTime here.
+					// Count is per-gun (parentGunIndex), so Overseer's two
+					// spawners each get their own cap and end up with 8 drones
+					// total (4 + 4) instead of sharing a 4-drone pool.
 					if (gun.shoot.isDrone && gun.shoot.maxChildren != null) {
 						let count = 0;
-						for (const b of this.bullets) if (b.isDrone) count++;
+						for (const b of this.bullets) if (b.isDrone && b.parentGunIndex === i) count++;
 						if (count >= gun.shoot.maxChildren) {
 							// no-op: skip shooting and don't reset shootTime.
 						} else {
-							this._fireGun(gun, gs, now, interval);
+							this._fireGun(gun, gs, now, interval, i);
 						}
 					} else {
-						this._fireGun(gun, gs, now, interval);
+						this._fireGun(gun, gs, now, interval, i);
 					}
 				}
 			}
@@ -996,7 +1096,10 @@ export class Tank {
 		const now = performance.now();
 		const sc = game.scale * game.room.fov;
 		// Bullets always render at full opacity, regardless of corpse/spawn fade.
-		for (const b of this.bullets) b.render(ctx);
+		// Missile sub-bullets (rear-jet trail) draw first so the missile body
+		// covers their muzzle.
+		for (const b of this.bullets) if (b.isMissileSub) b.render(ctx);
+		for (const b of this.bullets) if (!b.isMissileSub) b.render(ctx);
 		if (this.isDead()) {
 			const remaining = this.respawnAt - now;
 			if (remaining < CORPSE_FADE_MS) {
@@ -1092,7 +1195,9 @@ function renderTank(ctx, tank, posX, posY, angle, size, applyRoomFov, bodyFill =
 	const cy = posY * sc;
 	const def = TANK_DEFS[tank.defKey];
 	if (applyRoomFov && !skipBullets) {
-		for (const b of tank.bullets) b.render(ctx);
+		// Missile sub-bullets under everything else (same layering as Tank.render).
+		for (const b of tank.bullets) if (b.isMissileSub) b.render(ctx);
+		for (const b of tank.bullets) if (!b.isMissileSub) b.render(ctx);
 	}
 	const blend = state.damageBlendEnabled ? (tank.damageBlend ?? 0) * 0.5 : 0;
 	const flashFill = blend > 0 ? lerpColor(bodyFill, "#ff5050", blend) : bodyFill;

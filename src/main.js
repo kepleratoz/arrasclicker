@@ -1406,7 +1406,13 @@ function renderMapOverlay() {
 function handleHotkeys() {
 	if (game.mapOverlayOpen) return;
 	const altHeld = keys.pressed.has("AltLeft") || keys.pressed.has("AltRight");
-	if (altHeld && keys.justPressed.has("KeyS") && !game.openMenu) saveButton.callback();
+	// P            → manual autosave (writes localStorage immediately).
+	// Alt + P      → download the save file (same as the Save button).
+	// Alt + L      → load a save file (file picker).
+	if (keys.justPressed.has("KeyP") && !game.openMenu) {
+		if (altHeld) saveButton.callback();
+		else saveToStorage();
+	}
 	if (altHeld && keys.justPressed.has("KeyL") && !game.openMenu) loadButton.callback();
 	if (keys.justPressed.has("KeyG")) {
 		game.openMenu = game.openMenu === "gallery" ? null : "gallery";
