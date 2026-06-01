@@ -87,6 +87,16 @@ const actions = [
 			const s = game.shapes[i];
 			if (s.isSentry || s.isSentrySpawner) game.shapes.splice(i, 1);
 		} } },
+	// Skip the natural cooldown for the current area's wave system. If the
+	// player isn't in a map that has waves (currently just Crash Zone), the
+	// trigger is a no-op rather than erroring.
+	{ label: "Start Wave Tick",
+		run: () => {
+			if (state.currentMap === 1) {
+				// Set the schedule into the past so the next frame fires the wave.
+				game.nextCrashZoneSentryWave = performance.now() - 1;
+			}
+		} },
 	{ label: "Spawn Sentry Spawner",
 		run: () => {
 			const cx = game.room.minX + game.room.maxX / 2;

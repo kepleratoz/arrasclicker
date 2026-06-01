@@ -223,6 +223,8 @@ export class Siege {
 			this.health = this.maxHealth;
 			this.bullets.length = 0;
 			this.damageBlend = 0;
+			// Track death count for the per-map repair-cost ramp.
+			state.sanctuaryDeaths = (state.sanctuaryDeaths || 0) + 1;
 		}
 	}
 	render(ctx) {

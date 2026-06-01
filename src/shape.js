@@ -22,6 +22,10 @@ function eligibleGoldTypes() {
 
 const LOG5 = Math.log(5);
 const DEATH_FRAMES = 18; // ~300ms at 60fps
+// Same reverse-fade-in animation tanks use on revive — sentries and sentry
+// spawners start oversized & transparent and settle to full opacity over the
+// fade window. Public so any wave-spawned mob picks up the animation by default.
+const MOB_SPAWN_FADE_MS = 300;
 // 0..1 intensity of the DyingLight Q flash. Linear decay over 500 ms from the
 // timestamp the player last pressed Q (set by main.js's hotkey handler).
 function dyingLightFlashIntensity() {
@@ -1236,6 +1240,7 @@ export class Sentry extends Shape {
 		this.gunState = { gunPosition: 0, gunMotion: 0 };
 		this.velocity = new Vec2();
 		this.orbitDir = Math.random() < 0.5 ? 1 : -1;   // CW or CCW around the sanctuary.
+		this.spawnStartTime = performance.now();
 		this.angle = 0;          // body facing; updated each frame to follow velocity.
 		this.isSentry = true;   // marker for Tank distance-keeping logic.
 		this.damageType = 0;    // not food — buffVsFood doesn't apply to sentries.
@@ -1249,7 +1254,7 @@ export class Sentry extends Shape {
 		if (this.dying) return;
 		// A killed sentry pays out 5% of the player's current score, capped at e18.
 		if (!this.neutral) {
-			this.score = Math.min(state.score * 0.05, 1e18);
+			this.score = Math.min(state.score * 0.05, 1e19);
 			// Gemmed sentries (debug only) carry the same score multiplier the
 			// gem polygons get on top of their normal payout.
 			if (this.isGem) this.score *= this._gemScoreBoost();
@@ -1389,10 +1394,24 @@ export class Sentry extends Shape {
 		const cx = this.pos.x * sc;
 		const cy = this.pos.y * sc;
 		const fade = this.dying ? Math.max(0, 1 - this.dying / DEATH_FRAMES) : 1;
-		const sizeMul = 1 + 0.5 * (1 - fade);
+		// Reverse-fade-in animation during the first MOB_SPAWN_FADE_MS after
+		// spawn: alpha 0 → 1, sizeMul 1.5 → 1.
+		let spawnAlpha = 1;
+		let spawnSizeBoost = 0;
+		if (this.spawnStartTime != null) {
+			const sinceSpawn = performance.now() - this.spawnStartTime;
+			if (sinceSpawn < MOB_SPAWN_FADE_MS) {
+				const p = 1 - sinceSpawn / MOB_SPAWN_FADE_MS;
+				spawnAlpha = 1 - p;
+				spawnSizeBoost = 0.5 * p;
+			} else {
+				this.spawnStartTime = null;
+			}
+		}
+		const sizeMul = 1 + 0.5 * (1 - fade) + spawnSizeBoost;
 		// Bullets first (under the body).
 		for (const b of this.bullets) b.render(ctx);
-		ctx.globalAlpha = fade;
+		ctx.globalAlpha = fade * spawnAlpha;
 		const blend = state.damageBlendEnabled ? (this.damageBlend ?? 0) * 0.5 : 0;
 		const r = this.drawSize * sizeMul * sc;
 		const verts = new Array(3);
@@ -1567,6 +1586,7 @@ export class SentrySpawner extends Shape {
 		this.barrelStates = Array.from({ length: SS_BARRELS }, () => ({ position: 0, motion: 0 }));
 		this.velocity = new Vec2();
 		this.orbitDir = Math.random() < 0.5 ? 1 : -1;
+		this.spawnStartTime = performance.now();
 		// Auto-healer: spins to face the nearest injured Sentry and shoots pink
 		// heal bullets. Idle aim follows the spawner's current movement vector.
 		this.healerTurret = {
@@ -1578,8 +1598,8 @@ export class SentrySpawner extends Shape {
 	}
 	startDying() {
 		if (this.dying) return;
-		// A killed spawner pays out 100% of the player's current score, capped at e20.
-		this.score = Math.min(state.score, 1e20);
+		// A killed spawner pays out 100% of the player's current score, capped at e21.
+		this.score = Math.min(state.score, 1e21);
 		if (this.isGem) this.score *= this._gemScoreBoost();
 		this.dying = state.shapeDeathAnimEnabled ? 1 : DEATH_FRAMES + 1;
 	}
@@ -1740,10 +1760,22 @@ export class SentrySpawner extends Shape {
 		const cx = this.pos.x * sc;
 		const cy = this.pos.y * sc;
 		const fade = this.dying ? Math.max(0, 1 - this.dying / DEATH_FRAMES) : 1;
-		const sizeMul = 1 + 0.5 * (1 - fade);
+		let spawnAlpha = 1;
+		let spawnSizeBoost = 0;
+		if (this.spawnStartTime != null) {
+			const sinceSpawn = performance.now() - this.spawnStartTime;
+			if (sinceSpawn < MOB_SPAWN_FADE_MS) {
+				const p = 1 - sinceSpawn / MOB_SPAWN_FADE_MS;
+				spawnAlpha = 1 - p;
+				spawnSizeBoost = 0.5 * p;
+			} else {
+				this.spawnStartTime = null;
+			}
+		}
+		const sizeMul = 1 + 0.5 * (1 - fade) + spawnSizeBoost;
 		const r = this.drawSize * sizeMul * sc;
 		const lw = 4 * sc;
-		ctx.globalAlpha = fade;
+		ctx.globalAlpha = fade * spawnAlpha;
 		const blend = state.damageBlendEnabled ? this.damageBlend * 0.5 : 0;
 		const ssVerts = new Array(3);
 		for (let i = 0; i < 3; i++) {

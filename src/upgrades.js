@@ -248,7 +248,32 @@ class AddTank {
 	}
 	isDisabled() { return this.max() || !this.requirement() || state.score < this.cost(); }
 }
-export const generalUpgrades = [new ShapesCap(), new SpawnInterval(), new ShinyChance(), new ExtendGoldenDuration(), new ArenaFov(), new AddTank()];
+// Crash Zone–only 4th-tank slot. Visible only when state.currentMap === 1,
+// because tankCount and the bought-flag are per-map fields the upgrade only
+// makes sense on that map.
+class CrashZoneFourthTank {
+	button = new Button(() => {
+		state.score -= this.cost();
+		state.crashZoneFourthTankBought = true;
+		state.tankCount += 1;
+		syncTanks();
+	}, "#e6373d");
+	// Hide entirely outside Crash Zone — both tankCount and crashZoneFourthTankBought
+	// are per-map fields so the slot is meaningless on other maps.
+	hidden() { return state.currentMap !== 1; }
+	getLabel() { return "Add 4th Tank (Crash Zone)"; }
+	requirement() { return state.currentMap === 1 && state.tankCount === 3 && !state.crashZoneFourthTankBought; }
+	max() { return !!state.crashZoneFourthTankBought; }
+	cost() { return 1e19; }
+	getSecondary() {
+		if (this.max()) return "OWNED";
+		if (state.currentMap !== 1) return "Crash Zone only";
+		if (state.tankCount < 3) return "Need 3 tanks first";
+		return formatNumber(this.cost()) + " score.";
+	}
+	isDisabled() { return this.max() || !this.requirement() || state.score < this.cost(); }
+}
+export const generalUpgrades = [new ShapesCap(), new SpawnInterval(), new ShinyChance(), new ExtendGoldenDuration(), new ArenaFov(), new AddTank(), new CrashZoneFourthTank()];
 
 // ---------- Square ----------
 class SquareEvolution {

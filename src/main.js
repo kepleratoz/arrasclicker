@@ -3,7 +3,8 @@ import { mouse, keys } from "./input.js";
 import { game } from "./game.js";
 import { Room } from "./room.js";
 import { Button } from "./button.js";
-import { Shape, TYPE_NAMES, TYPE_SIZES, TYPE_SIDES, makeShapeData } from "./shape.js";
+import { Shape, Sentry, SentrySpawner, TYPE_NAMES, TYPE_SIZES, TYPE_SIDES, makeShapeData } from "./shape.js";
+import { Vec2 } from "./utils.js";
 import { drawText } from "./render.js";
 import { tabs, generalTab } from "./tabs.js";
 import { encode, decode, saveToStorage, loadFromStorage, enableAutoSave, onBeforeSave, applyManualSave, downloadSave, pickSaveFile } from "./save.js";
@@ -1123,10 +1124,61 @@ function renderGalleryDetail() {
 	}
 }
 
+// Crash Zone sentry waves: once the player has paid to repair a real
+// (non-neutral) sanctuary on Map 1, periodic raids spawn 2–5 sentries on the
+// outer edges of the map every 1–2 minutes. Resets whenever the sanctuary
+// collapses back to neutral (e.g. it was killed and needs repair again).
+function handleCrashZoneSentryWaves(now) {
+	if (state.currentMap !== 1) return;
+	const hasRealSanctuary = game.sieges.some((s) => !s.neutral);
+	if (!hasRealSanctuary) {
+		game.nextCrashZoneSentryWave = 0;
+		return;
+	}
+	if (!game.nextCrashZoneSentryWave) {
+		// First scheduling after the sanctuary appears — wait 1–2 min before the first wave.
+		game.nextCrashZoneSentryWave = now + (60 + Math.random() * 60) * 1000;
+		return;
+	}
+	if (now < game.nextCrashZoneSentryWave) return;
+	spawnCrashZoneWave();
+	// Reschedule for the next 1–2 minute window.
+	game.nextCrashZoneSentryWave = now + (60 + Math.random() * 60) * 1000;
+}
+
+// Spawn one Crash Zone raid wave right now. Exposed so the debug "Start Wave
+// Tick" action can call it without waiting for the natural timer.
+export function spawnCrashZoneWave() {
+	if (state.currentMap !== 1) return;
+	const room = game.room;
+	const margin = 60;
+	const pickEdgePos = () => {
+		const edge = Math.floor(Math.random() * 4);
+		switch (edge) {
+			case 0: return new Vec2(room.minX + Math.random() * room.maxX, room.minY + margin);
+			case 1: return new Vec2(room.minX + room.maxX - margin,        room.minY + Math.random() * room.maxY);
+			case 2: return new Vec2(room.minX + Math.random() * room.maxX, room.minY + room.maxY - margin);
+			default: return new Vec2(room.minX + margin,                   room.minY + Math.random() * room.maxY);
+		}
+	};
+	// 2–5 regular sentries.
+	const count = 2 + Math.floor(Math.random() * 4);
+	for (let i = 0; i < count; i++) {
+		game.shapes.push(new Sentry(pickEdgePos()));
+	}
+	// 5% chance per wave: a Sentry Sanctuary spawns alongside them.
+	if (Math.random() < 0.05) {
+		game.shapes.push(new SentrySpawner(pickEdgePos()));
+	}
+}
+
 // Click-to-repair: clicking a neutral sanctuary selects it and shows a "Repair
-// Sanctuary" button above it. Pressing the button pays e12 score and replaces
-// the neutral siege with a real tier-1 sanctuary at the same spot.
-const REPAIR_COST = 1e14;
+// Sanctuary" button above it. Pressing the button pays the current repair
+// cost and replaces the neutral siege with a real tier-1 sanctuary at the
+// same spot. Cost ramps 10× per death on this map, capped at 1e19.
+function getRepairCost() {
+	return Math.min(1e19, 1e14 * Math.pow(10, state.sanctuaryDeaths || 0));
+}
 function handleSanctuaryRepair() {
 	if (game.mapOverlayOpen || game.debugMode || game.controlledTank) return;
 	const ctx = game.ctx;
@@ -1159,7 +1211,8 @@ function handleSanctuaryRepair() {
 	const x = sel.pos.x * sc - w / 2;
 	const y = sel.pos.y * sc - sel.size * sc - 24 * s - h;
 	const hovered = mouse.x >= x && mouse.x <= x + w && mouse.y >= y && mouse.y <= y + h;
-	const affordable = state.score >= REPAIR_COST;
+	const cost = getRepairCost();
+	const affordable = state.score >= cost;
 	const pressed = hovered && mouse.left && affordable;
 	const fill = affordable ? "#58b0d0" : "#888";
 	const stroke = darken(fill, 0.75);
@@ -1176,9 +1229,9 @@ function handleSanctuaryRepair() {
 		ctx.fillRect(x, y, w, h);
 	}
 	drawText(ctx, "Repair Sanctuary", x + w / 2, y + h / 2 - 7 * s, false, true, true, 20 * s);
-	drawText(ctx, formatNumber(REPAIR_COST) + " score", x + w / 2, y + h / 2 + 14 * s, !affordable, true, true, 16 * s);
+	drawText(ctx, formatNumber(cost) + " score", x + w / 2, y + h / 2 + 14 * s, !affordable, true, true, 16 * s);
 	if (hovered && affordable && mouse.leftRelease) {
-		state.score -= REPAIR_COST;
+		state.score -= cost;
 		const idx = game.sieges.indexOf(sel);
 		if (idx >= 0) game.sieges.splice(idx, 1);
 		game.sieges.push(new Siege(1));
@@ -1481,6 +1534,7 @@ function frame(now) {
 		}
 		updateDebug();
 		handleTankClicks();
+		handleCrashZoneSentryWaves(now);
 		game.update();
 	}
 	if (menuOpen) {

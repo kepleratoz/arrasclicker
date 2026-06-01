@@ -45,6 +45,8 @@ export const state = {
 	trianglesUnlocked: false,
 	pentagonsUnlocked: false,
 	hexagonsUnlocked: false,
+	sanctuaryDeaths: 0,               // per-map: # of times this map's sanctuary has been killed. Drives the 10× repair cost ramp.
+	crashZoneFourthTankBought: false, // per-map: Crash Zone-only 4th-tank unlock.
 	// Map system: state.currentMap is the active map index (0 = base, 1 = unlocked 5x map).
 	// state.maps[i] stores a plain snapshot of per-map fields for the inactive map.
 	currentMap: 0,
@@ -91,6 +93,7 @@ export const PER_MAP_FIELDS = [
 	"tankRarityCap", "tankForceTypeCap", "tankForceRarityCap", "tankForceTierCap",
 	"shapeTypeBuff", "shapeEvoNerf", "layersBuff", "layersCaps", "rarityCap",
 	"squaresUnlocked", "trianglesUnlocked", "pentagonsUnlocked", "hexagonsUnlocked",
+	"sanctuaryDeaths", "crashZoneFourthTankBought",
 ];
 
 export function freshMapState() {
@@ -109,6 +112,7 @@ export function freshMapState() {
 		rarityCap: 0,
 		squaresUnlocked: false, trianglesUnlocked: false,
 		pentagonsUnlocked: false, hexagonsUnlocked: false,
+		sanctuaryDeaths: 0, crashZoneFourthTankBought: false,
 		tanks: [],
 	};
 }

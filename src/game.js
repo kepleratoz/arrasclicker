@@ -309,7 +309,7 @@ class Game {
 		// Reorderable tabs (currently just the Tank tab) display their upgrades in
 		// the order described by state.tankFilterOrder, padded with any new indices
 		// so adding a new filter to tankUpgrades doesn't drop it from the panel.
-		const baseUpgrades = this.currentTab.upgrades;
+		const baseUpgrades = this.currentTab.upgrades.filter((u) => !(typeof u.hidden === "function" && u.hidden()));
 		let displayUpgrades = baseUpgrades;
 		if (this.currentTab.reorderable) {
 			const order = (state.tankFilterOrder || []).filter((i) => i >= 0 && i < baseUpgrades.length);
